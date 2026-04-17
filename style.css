@@ -1,13 +1,41 @@
 :root {
+  /* palette */
   --bg: #fff;
   --fg: #111;
   --muted: #666;
   --border: #ddd;
   --border-strong: #111;
-  --accent: #222;
   --hover: #f6f6f6;
   --active: #fffbe6;
+  --dot: #d22;
+
+  /* typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-base: 1rem;
+  --font-sm: 0.85rem;
+  --font-xs: 0.75rem;
+  --font-lg: 1.8rem;
+  --line: 1.5;
+
+  /* spacing */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+
+  /* shapes */
+  --radius: 10px;
+  --gap: var(--sp-3);
+  --card-min: 260px;
+  --card-min-height: 6rem;
   --shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --container: 1400px;
+
+  /* layout */
+  --pad-page: var(--sp-5);
+  --player-pad-bottom: 6rem;
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -16,9 +44,9 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: var(--font-base);
+  line-height: var(--line);
   background: var(--bg);
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
@@ -29,23 +57,31 @@ body {
 }
 
 header {
-  padding: 1.25rem 1.25rem 0.5rem;
-  max-width: 1400px;
+  padding: var(--sp-5) var(--sp-5) var(--sp-2);
+  max-width: var(--container);
   margin: 0 auto;
   width: 100%;
 }
-header h1 { margin: 0; font-size: 1.8rem; letter-spacing: -0.01em; }
-header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.95rem; }
+header h1 {
+  margin: 0;
+  font-size: var(--font-lg);
+  letter-spacing: -0.01em;
+}
+header p {
+  margin: var(--sp-1) 0 0;
+  color: var(--muted);
+  font-size: var(--font-sm);
+}
 
 main {
   flex: 1;
-  padding: 1rem 1.25rem 6rem;
-  max-width: 1400px;
+  padding: var(--sp-4) var(--sp-5) var(--player-pad-bottom);
+  max-width: var(--container);
   margin: 0 auto;
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: var(--gap);
   align-content: start;
 }
 
@@ -53,24 +89,27 @@ main {
   grid-column: 1 / -1;
   color: var(--muted);
   text-align: center;
-  padding: 3rem 1rem;
+  padding: var(--sp-6) var(--sp-4);
 }
 
 .station {
   border: 1px solid var(--border);
   background: var(--bg);
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: var(--radius);
+  padding: var(--sp-3) var(--sp-4);
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: inherit;
-  transition: background 0.1s ease, border-color 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.05s ease;
   box-shadow: var(--shadow);
-  min-height: 96px;
+  min-height: var(--card-min-height);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-1);
 }
 .station:hover { background: var(--hover); border-color: #bbb; }
 .station:active { transform: translateY(1px); }
@@ -86,13 +125,13 @@ main {
 .station .row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .station .dot {
-  width: 8px;
-  height: 8px;
+  width: 0.5rem;
+  height: 0.5rem;
   border-radius: 50%;
-  background: #d22;
+  background: var(--dot);
   flex-shrink: 0;
   animation: pulse 2s infinite;
 }
@@ -102,18 +141,20 @@ main {
 }
 .station .name {
   font-weight: 600;
-  font-size: 1rem;
-  line-height: 1.3;
+  font-size: var(--font-base);
   flex: 1;
   word-break: break-word;
 }
 .station .np {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--font-sm);
   line-height: 1.35;
   min-height: 1.35em;
 }
-.station .np b { color: var(--fg); font-weight: 600; }
+.station .np b {
+  color: var(--fg);
+  font-weight: 600;
+}
 
 .player {
   position: sticky;
@@ -124,21 +165,22 @@ main {
   backdrop-filter: saturate(180%) blur(8px);
   -webkit-backdrop-filter: saturate(180%) blur(8px);
   border-top: 1px solid var(--border);
-  padding: 10px 1.25rem calc(10px + env(safe-area-inset-bottom));
+  padding: var(--sp-2) var(--sp-5) calc(var(--sp-2) + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--sp-4);
   z-index: 10;
 }
 .player .now {
-  flex: 1;
+  flex-shrink: 0;
   min-width: 0;
+  max-width: 40%;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .player .now b {
-  font-size: 0.95rem;
+  font-size: var(--font-sm);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -146,29 +188,33 @@ main {
 }
 .player .now span {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--font-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .player .now small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: var(--font-xs);
 }
 .player audio {
   flex: 1;
   width: 100%;
 }
 
-.credit {
-  text-align: center;
-  padding: 1rem;
-  color: var(--muted);
-}
-.credit a { color: inherit; }
-
 @media (max-width: 640px) {
-  main { padding: 1rem 0.75rem 8rem; gap: 10px; }
-  header { padding: 1rem 0.75rem 0.25rem; }
-  .player { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0.75rem calc(10px + env(safe-area-inset-bottom)); }
+  :root {
+    --pad-page: var(--sp-3);
+    --player-pad-bottom: 8rem;
+    --gap: var(--sp-2);
+  }
+  main { padding: var(--sp-4) var(--pad-page) var(--player-pad-bottom); }
+  header { padding: var(--sp-4) var(--pad-page) var(--sp-1); }
+  .player {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--pad-page) calc(var(--sp-2) + env(safe-area-inset-bottom));
+  }
+  .player .now { max-width: none; }
 }

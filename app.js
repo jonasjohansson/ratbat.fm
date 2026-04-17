@@ -116,5 +116,31 @@ function syncPlayer() {
   }
 }
 
-refresh();
-setInterval(refresh, 3000);
+// Poll faster when nothing is live so new broadcasts appear quickly;
+// back off once stations are up (keeps now-playing fresh without hammering).
+var POLL_FAST = 1500;
+var POLL_SLOW = 3000;
+var pollTimer = null;
+
+function schedulePoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  var delay = stations.length ? POLL_SLOW : POLL_FAST;
+  pollTimer = setTimeout(function () { refresh().then(schedulePoll); }, delay);
+}
+
+// Wrap refresh so schedulePoll can chain off it cleanly.
+var _refresh = refresh;
+refresh = function () {
+  return new Promise(function (resolve) {
+    _refresh();
+    // _refresh is fire-and-forget; give it a tick before scheduling next.
+    setTimeout(resolve, 0);
+  });
+};
+
+// Also refetch when the tab regains focus (user flipped back from Ratbat app).
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) refresh();
+});
+
+refresh().then(schedulePoll);
