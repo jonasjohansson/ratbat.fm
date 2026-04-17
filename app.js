@@ -65,8 +65,7 @@ function renderStations() {
     return '<li' + active + '><a href="#" data-id="' + escapeHtml(s.id) +
       '" data-url="' + escapeHtml(s.streamURL || '') +
       '" data-name="' + escapeHtml(s.name) + '">' +
-      escapeHtml(s.name) + '</a> (' + s.listeners + ' listener' +
-      (s.listeners === 1 ? '' : 's') + ')</li>';
+      escapeHtml(s.name) + '</a></li>';
   }).join('');
   var links = $list.querySelectorAll('a');
   for (var i = 0; i < links.length; i++) {
