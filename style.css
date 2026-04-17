@@ -157,8 +157,7 @@ main {
 }
 .player audio {
   flex: 1;
-  max-width: 520px;
-  min-width: 200px;
+  width: 100%;
 }
 
 .credit {
@@ -169,8 +168,7 @@ main {
 .credit a { color: inherit; }
 
 @media (max-width: 640px) {
-  main { padding: 1rem 0.75rem 7rem; gap: 10px; }
+  main { padding: 1rem 0.75rem 8rem; gap: 10px; }
   header { padding: 1rem 0.75rem 0.25rem; }
   .player { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0.75rem calc(10px + env(safe-area-inset-bottom)); }
-  .player audio { width: 100%; max-width: none; }
 }
