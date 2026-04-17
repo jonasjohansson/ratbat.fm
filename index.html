@@ -23,13 +23,15 @@
 </head>
 <body>
 
+<main>
+
 <h1>Ratbat</h1>
 <p>Personal radio.</p>
 
 <hr>
 
 <h2>Stations</h2>
-<ul id="station-list">
+<ul id="station-list" aria-label="Live stations" aria-live="polite">
   <li>Loading...</li>
 </ul>
 
@@ -38,12 +40,14 @@
 <h2>Now Playing</h2>
 <p><b id="track-title">—</b> <span id="track-artist">—</span></p>
 <p><i id="track-album"></i></p>
-<audio id="audio" controls></audio>
+<audio id="audio" controls aria-label="Radio player"></audio>
 <p>From: <span id="active-station-name">—</span></p>
 
 <hr>
 
 <p><small>Broadcast by <a href="https://github.com/jonasjohansson/ratbat">Ratbat</a>.</small></p>
+
+</main>
 
 </body>
 </html>
