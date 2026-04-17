@@ -99,20 +99,29 @@ function select(id, url, name) {
 }
 
 function syncPlayer() {
-  if (!activeId) return;
+  if (!activeId) {
+    // User hasn't picked a station — restore default tab title.
+    document.title = 'Ratbat';
+    return;
+  }
   var s = stations.find(function (x) { return x.id === activeId; });
   if (!s) {
     $title.textContent = '—';
     $artist.textContent = 'Station went offline';
+    document.title = 'Ratbat';
     return;
   }
   var t = s.currentTrack;
   if (t) {
     $title.textContent = t.title;
     $artist.textContent = t.artist;
+    // Surface now-playing in the tab title too, so you can see what's on
+    // from a glance at the browser chrome / home-screen PWA.
+    document.title = t.artist + ' — ' + t.title + ' · Ratbat';
   } else {
     $title.textContent = 'Live';
     $artist.textContent = s.name;
+    document.title = s.name + ' · Ratbat';
   }
 }
 
