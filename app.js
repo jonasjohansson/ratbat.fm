@@ -1,160 +1,110 @@
-// Ratbat web player.
-//
-// Polls /now.json every few seconds, lets the user pick a station, and
-// streams its AAC feed via a plain <audio> element. The stream URL itself
-// is returned by the server in /now.json — we never hard-code slugs.
-//
-// State is deliberately flat; there's no framework. DOM references are
-// looked up once on load and mutated in place on each refresh tick.
-//
-// API resolution — no hardcoded backend. In priority:
-//   1. ?api=https://... query param (explicit override for testing or custom setups)
-//   2. window.RATBAT_API global (set it in a <script> before app.js if you want to pin it)
-//   3. Hostname convention: ratbat.X → radio.X (so forking the repo + setting your own
-//      DNS pair Just Works — e.g. ratbat.mattiasjohansson.se talks to radio.mattiasjohansson.se)
-//   4. Same-origin fallback (dev with a local API proxy)
+// Ratbat web player. Plain HTML/JS, no framework.
 
 function resolveAPIBase() {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('api')) {
-        return params.get('api').replace(/\/+$/, '');
-    }
-    if (typeof window.RATBAT_API === 'string' && window.RATBAT_API) {
-        return window.RATBAT_API.replace(/\/+$/, '');
-    }
-    const host = window.location.hostname;
-    if (host.startsWith('ratbat.')) {
-        return `${window.location.protocol}//radio.${host.slice('ratbat.'.length)}`;
-    }
-    return window.location.origin;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('api')) return params.get('api').replace(/\/+$/, '');
+  if (typeof window.RATBAT_API === 'string' && window.RATBAT_API) {
+    return window.RATBAT_API.replace(/\/+$/, '');
+  }
+  const host = window.location.hostname;
+  if (host.startsWith('ratbat.')) {
+    return window.location.protocol + '//radio.' + host.slice('ratbat.'.length);
+  }
+  return window.location.origin;
 }
 
-const API_BASE = resolveAPIBase();
+var API_BASE = resolveAPIBase();
+var stations = [];
+var activeId = null;
 
-const state = {
-    stations: [],
-    activeStationId: null,
-    isPlaying: false,
-};
+var $list = document.getElementById('station-list');
+var $audio = document.getElementById('audio');
+var $title = document.getElementById('track-title');
+var $artist = document.getElementById('track-artist');
+var $album = document.getElementById('track-album');
+var $stationName = document.getElementById('active-station-name');
 
-const $list = document.getElementById('station-list');
-const $playerSection = document.getElementById('player-section');
-const $audio = document.getElementById('audio');
-const $playPause = document.getElementById('play-pause');
-const $volume = document.getElementById('volume');
-const $title = document.getElementById('track-title');
-const $artist = document.getElementById('track-artist');
-const $album = document.getElementById('track-album');
-const $stationName = document.getElementById('active-station-name');
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
 
-async function refresh() {
-    try {
-        const res = await fetch(`${API_BASE}/now.json`, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        // Rebase stream URLs to include API base (they come back as /stream/x.aac).
-        for (const s of data.stations || []) {
-            if (s.streamURL && s.streamURL.startsWith('/')) {
-                s.streamURL = API_BASE + s.streamURL;
-            }
-        }
-        state.stations = data.stations || [];
-        renderStations();
-        syncActiveTrack();
-    } catch (err) {
-        // Server offline → graceful empty state.
-        state.stations = [];
-        state.activeStationId = null;
-        $list.innerHTML = '<div class="empty">Broadcaster offline. Come back when Ratbat is live.</div>';
-        $playerSection.hidden = true;
-    }
+function refresh() {
+  fetch(API_BASE + '/now.json', { cache: 'no-store' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function (data) {
+      stations = (data.stations || []).map(function (s) {
+        if (s.streamURL && s.streamURL.charAt(0) === '/') s.streamURL = API_BASE + s.streamURL;
+        return s;
+      });
+      renderStations();
+      syncTrack();
+    })
+    .catch(function () {
+      stations = [];
+      activeId = null;
+      $list.innerHTML = '<li><i>Broadcaster offline.</i></li>';
+      $title.textContent = '—';
+      $artist.textContent = '—';
+      $album.textContent = '';
+      $stationName.textContent = '—';
+    });
 }
 
 function renderStations() {
-    if (!state.stations.length) {
-        $list.innerHTML = '<div class="empty">No stations broadcasting right now.</div>';
-        return;
-    }
-    $list.innerHTML = state.stations.map(s => `
-        <div class="station ${state.activeStationId === s.id ? 'active' : ''}"
-             data-station-id="${escapeHtml(s.id)}"
-             data-stream-url="${escapeHtml(s.streamURL || '')}"
-             data-name="${escapeHtml(s.name)}">
-            <div class="dot"></div>
-            <span class="name">${escapeHtml(s.name)}</span>
-            <span class="listeners">${s.listeners} ${s.listeners === 1 ? 'listener' : 'listeners'}</span>
-            <span class="play-icon">▶</span>
-        </div>
-    `).join('');
-
-    $list.querySelectorAll('.station').forEach(el => {
-        el.addEventListener('click', () => selectStation(el.dataset.stationId, el.dataset.streamUrl, el.dataset.name));
+  if (!stations.length) {
+    $list.innerHTML = '<li><i>No stations broadcasting.</i></li>';
+    return;
+  }
+  $list.innerHTML = stations.map(function (s) {
+    var active = activeId === s.id ? ' class="active"' : '';
+    return '<li' + active + '><a href="#" data-id="' + escapeHtml(s.id) +
+      '" data-url="' + escapeHtml(s.streamURL || '') +
+      '" data-name="' + escapeHtml(s.name) + '">' +
+      escapeHtml(s.name) + '</a> (' + s.listeners + ' listener' +
+      (s.listeners === 1 ? '' : 's') + ')</li>';
+  }).join('');
+  var links = $list.querySelectorAll('a');
+  for (var i = 0; i < links.length; i++) {
+    links[i].addEventListener('click', function (e) {
+      e.preventDefault();
+      select(this.dataset.id, this.dataset.url, this.dataset.name);
     });
+  }
 }
 
-function selectStation(id, streamURL, name) {
-    if (state.activeStationId === id && !$audio.paused) {
-        pause();
-        return;
-    }
-    state.activeStationId = id;
-    $stationName.textContent = name;
-    $audio.src = streamURL;
-    $audio.play().then(() => {
-        state.isPlaying = true;
-        $playPause.textContent = '⏸';
-        $playerSection.hidden = false;
-        document.querySelectorAll('.station').forEach(el => {
-            el.classList.toggle('active', el.dataset.stationId === id);
-        });
-    }).catch(err => console.warn('play failed', err));
-    syncActiveTrack();
+function select(id, url, name) {
+  activeId = id;
+  $stationName.textContent = name;
+  $audio.src = url;
+  $audio.play().catch(function () { /* user will hit play */ });
+  renderStations();
+  syncTrack();
 }
 
-function syncActiveTrack() {
-    if (!state.activeStationId) return;
-    const active = state.stations.find(s => s.id === state.activeStationId);
-    if (!active) {
-        $title.textContent = '—';
-        $artist.textContent = 'Station went offline';
-        $album.textContent = '';
-        return;
-    }
-    const t = active.currentTrack;
-    if (t) {
-        $title.textContent = t.title;
-        $artist.textContent = t.artist;
-        $album.textContent = t.album || '';
-    } else {
-        $title.textContent = 'Live';
-        $artist.textContent = active.name;
-        $album.textContent = '';
-    }
-}
-
-function pause() {
-    $audio.pause();
-    state.isPlaying = false;
-    $playPause.textContent = '▶';
-}
-
-$playPause.addEventListener('click', () => {
-    if (state.isPlaying) pause();
-    else if (state.activeStationId) $audio.play().then(() => {
-        state.isPlaying = true;
-        $playPause.textContent = '⏸';
-    });
-});
-
-$volume.addEventListener('input', e => {
-    $audio.volume = e.target.value / 100;
-});
-$audio.volume = 0.8;
-
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
+function syncTrack() {
+  if (!activeId) return;
+  var s = stations.find(function (x) { return x.id === activeId; });
+  if (!s) {
+    $title.textContent = '—';
+    $artist.textContent = 'Station went offline';
+    $album.textContent = '';
+    return;
+  }
+  var t = s.currentTrack;
+  if (t) {
+    $title.textContent = t.title;
+    $artist.textContent = t.artist;
+    $album.textContent = t.album || '';
+  } else {
+    $title.textContent = 'Live';
+    $artist.textContent = s.name;
+    $album.textContent = '';
+  }
 }
 
 refresh();
