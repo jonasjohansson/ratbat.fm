@@ -1,4 +1,6 @@
-// Ratbat web player. Plain HTML/JS, no framework.
+// Ratbat web player — responsive card grid.
+// Each live station is one card. Click a card to play it. The sticky
+// footer shows what's playing + native <audio> controls.
 
 function resolveAPIBase() {
   const params = new URLSearchParams(window.location.search);
@@ -17,11 +19,11 @@ var API_BASE = resolveAPIBase();
 var stations = [];
 var activeId = null;
 
-var $list = document.getElementById('station-list');
+var $stations = document.getElementById('stations');
+var $player = document.getElementById('player');
 var $audio = document.getElementById('audio');
 var $title = document.getElementById('track-title');
 var $artist = document.getElementById('track-artist');
-var $album = document.getElementById('track-album');
 var $stationName = document.getElementById('active-station-name');
 
 function escapeHtml(s) {
@@ -41,36 +43,46 @@ function refresh() {
         if (s.streamURL && s.streamURL.charAt(0) === '/') s.streamURL = API_BASE + s.streamURL;
         return s;
       });
-      renderStations();
-      syncTrack();
+      render();
+      syncPlayer();
     })
     .catch(function () {
       stations = [];
       activeId = null;
-      $list.innerHTML = '<li><i>Broadcaster offline.</i></li>';
-      $title.textContent = '—';
-      $artist.textContent = '—';
-      $album.textContent = '';
-      $stationName.textContent = '—';
+      $stations.innerHTML = '<p class="empty">Broadcaster offline.</p>';
+      $player.hidden = true;
     });
 }
 
-function renderStations() {
+function render() {
   if (!stations.length) {
-    $list.innerHTML = '<li><i>No stations broadcasting.</i></li>';
+    $stations.innerHTML = '<p class="empty">No stations broadcasting right now.</p>';
     return;
   }
-  $list.innerHTML = stations.map(function (s) {
-    var active = activeId === s.id ? ' class="active"' : '';
-    return '<li' + active + '><a href="#" data-id="' + escapeHtml(s.id) +
-      '" data-url="' + escapeHtml(s.streamURL || '') +
-      '" data-name="' + escapeHtml(s.name) + '">' +
-      escapeHtml(s.name) + '</a></li>';
+  $stations.innerHTML = stations.map(function (s) {
+    var activeCls = activeId === s.id ? ' active' : '';
+    var t = s.currentTrack;
+    var np = t
+      ? '<b>' + escapeHtml(t.title) + '</b> — ' + escapeHtml(t.artist)
+      : 'Live';
+    return (
+      '<button type="button" class="station' + activeCls + '" ' +
+      'data-id="' + escapeHtml(s.id) + '" ' +
+      'data-url="' + escapeHtml(s.streamURL || '') + '" ' +
+      'data-name="' + escapeHtml(s.name) + '" ' +
+      'aria-pressed="' + (activeId === s.id ? 'true' : 'false') + '">' +
+        '<div class="row">' +
+          '<span class="dot" aria-hidden="true"></span>' +
+          '<span class="name">' + escapeHtml(s.name) + '</span>' +
+        '</div>' +
+        '<div class="np">' + np + '</div>' +
+      '</button>'
+    );
   }).join('');
-  var links = $list.querySelectorAll('a');
-  for (var i = 0; i < links.length; i++) {
-    links[i].addEventListener('click', function (e) {
-      e.preventDefault();
+
+  var cards = $stations.querySelectorAll('.station');
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].addEventListener('click', function () {
       select(this.dataset.id, this.dataset.url, this.dataset.name);
     });
   }
@@ -80,29 +92,27 @@ function select(id, url, name) {
   activeId = id;
   $stationName.textContent = name;
   $audio.src = url;
-  $audio.play().catch(function () { /* user will hit play */ });
-  renderStations();
-  syncTrack();
+  $audio.play().catch(function () { /* autoplay policy — user can hit play */ });
+  $player.hidden = false;
+  syncPlayer();
+  render();
 }
 
-function syncTrack() {
+function syncPlayer() {
   if (!activeId) return;
   var s = stations.find(function (x) { return x.id === activeId; });
   if (!s) {
     $title.textContent = '—';
     $artist.textContent = 'Station went offline';
-    $album.textContent = '';
     return;
   }
   var t = s.currentTrack;
   if (t) {
     $title.textContent = t.title;
     $artist.textContent = t.artist;
-    $album.textContent = t.album || '';
   } else {
     $title.textContent = 'Live';
     $artist.textContent = s.name;
-    $album.textContent = '';
   }
 }
 
