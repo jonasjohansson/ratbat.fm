@@ -7,12 +7,29 @@
 // State is deliberately flat; there's no framework. DOM references are
 // looked up once on load and mutated in place on each refresh tick.
 //
-// This page is hosted on ratbat.jonasjohansson.se (GitHub Pages) while
-// the stream API lives at radio.jonasjohansson.se (Mac app via Cloudflare
-// Tunnel). Cross-origin, so we prepend API_BASE to /now.json and rebase
-// the returned streamURLs so the <audio> element hits the tunnel too.
+// API resolution — no hardcoded backend. In priority:
+//   1. ?api=https://... query param (explicit override for testing or custom setups)
+//   2. window.RATBAT_API global (set it in a <script> before app.js if you want to pin it)
+//   3. Hostname convention: ratbat.X → radio.X (so forking the repo + setting your own
+//      DNS pair Just Works — e.g. ratbat.mattiasjohansson.se talks to radio.mattiasjohansson.se)
+//   4. Same-origin fallback (dev with a local API proxy)
 
-const API_BASE = 'https://radio.jonasjohansson.se';
+function resolveAPIBase() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('api')) {
+        return params.get('api').replace(/\/+$/, '');
+    }
+    if (typeof window.RATBAT_API === 'string' && window.RATBAT_API) {
+        return window.RATBAT_API.replace(/\/+$/, '');
+    }
+    const host = window.location.hostname;
+    if (host.startsWith('ratbat.')) {
+        return `${window.location.protocol}//radio.${host.slice('ratbat.'.length)}`;
+    }
+    return window.location.origin;
+}
+
+const API_BASE = resolveAPIBase();
 
 const state = {
     stations: [],
