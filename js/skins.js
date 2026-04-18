@@ -58,6 +58,51 @@
       fflate.unzip(buffer, (err, out) => (err ? reject(err) : resolve(out)));
     });
 
+  // Decode a BMP (browsers do this natively) to ImageData.
+  async function decodeBmp(bytes) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'image/bmp' }));
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('BMP decode failed'));
+        img.src = url;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // Find the dominant saturated color — bucket to 5 bits/channel, drop
+  // greys, return the most frequent bucket.
+  function pickAccent(imageData) {
+    const { data } = imageData;
+    const buckets = new Map();
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const max = Math.max(r, g, b);
+      const sat = max === 0 ? 0 : (max - Math.min(r, g, b)) / max;
+      if (sat < 0.3 || max < 40) continue;
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      buckets.set(key, (buckets.get(key) || 0) + 1);
+    }
+    let bestKey = null, bestCount = 0;
+    for (const [k, c] of buckets) {
+      if (c > bestCount) { bestCount = c; bestKey = k; }
+    }
+    if (bestKey === null) return null;
+    return [
+      ((bestKey >> 10) & 31) * 8 + 4,
+      ((bestKey >> 5) & 31) * 8 + 4,
+      (bestKey & 31) * 8 + 4,
+    ];
+  }
+
   const loadBuffer = async (source) => {
     if (source instanceof File || source instanceof Blob) {
       return new Uint8Array(await source.arrayBuffer());
@@ -93,13 +138,24 @@
     const files = await unzipWsz(buf);
     const visBytes = findFile(files, 'viscolor.txt');
     const plBytes = findFile(files, 'pledit.txt');
+    const mainBytes = findFile(files, 'main.bmp');
     const vis = visBytes ? parseVisColor(td.decode(visBytes)) : [];
     const pl = plBytes ? parsePlEdit(td.decode(plBytes)) : {};
 
     const bgRGB = parseHex(pl.NormalBG || '#000000') || [0, 0, 0];
     const fgRGB = parseHex(pl.Normal || '#00ff00') || [0, 255, 0];
     const selectedRGB = parseHex(pl.SelectedBG || '') || null;
-    const accentRGB = vis[2] || null; // red top-of-spectrum is the classic accent
+
+    // Prefer a sampled accent from MAIN.BMP (matches what the eye sees);
+    // fall back to viscolor[2] (classic top-of-spectrum red).
+    let accentRGB = null;
+    if (mainBytes) {
+      try {
+        const imageData = await decodeBmp(mainBytes);
+        accentRGB = pickAccent(imageData);
+      } catch (_) { /* fall through */ }
+    }
+    if (!accentRGB) accentRGB = vis[2] || null;
 
     applyPalette({ bgRGB, fgRGB, selectedRGB, accentRGB });
   }

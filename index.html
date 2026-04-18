@@ -30,12 +30,27 @@
   <p>Personal radio. <button type="button" class="skin-toggle" id="skin-toggle" aria-expanded="false" aria-controls="skin-picker">Skin</button></p>
   <div class="skin-picker" id="skin-picker" hidden>
     <div class="skin-presets">
-      <button type="button" data-skin-reset>Plain</button>
-      <button type="button" data-skin-url="/skins/base.wsz">Classic</button>
-      <button type="button" data-skin-url="https://archive.org/download/winampskin_Classic_Green_1/Classic_Green_1.wsz">Classic Green</button>
-      <button type="button" data-skin-url="https://archive.org/download/winampskins_bento_classic/bento_classic.wsz">Bento</button>
-      <button type="button" data-skin-url="https://archive.org/download/winampskin_Bento_Classified/Bento_Classified.wsz">Bento Classified</button>
-      <button type="button" data-skin-url="https://archive.org/download/winampskins_Green-Amp/Green-Amp.wsz">Green-Amp</button>
+      <button type="button" class="skin-preset plain" data-skin-reset>
+        <span class="skin-preset-label">Plain</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="/skins/base.wsz" style="background-image:url('/skins/thumbs/base.png')">
+        <span class="skin-preset-label">Classic</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskin_Classic_Green_1/Classic_Green_1.wsz" style="background-image:url('/skins/thumbs/classic-green.png')">
+        <span class="skin-preset-label">Classic Green</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_bento_classic/bento_classic.wsz" style="background-image:url('/skins/thumbs/bento.png')">
+        <span class="skin-preset-label">Bento</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_Green-Amp/Green-Amp.wsz" style="background-image:url('/skins/thumbs/green-amp.png')">
+        <span class="skin-preset-label">Green-Amp</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_nucleo/nucleo.wsz" style="background-image:url('/skins/thumbs/nucleo.png')">
+        <span class="skin-preset-label">Nucleo</span>
+      </button>
+      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_Deep_Space_9/Deep%20Space%209.wsz" style="background-image:url('/skins/thumbs/deep-space-9.png')">
+        <span class="skin-preset-label">Deep Space 9</span>
+      </button>
     </div>
     <div class="skin-inputs">
       <label class="skin-upload">

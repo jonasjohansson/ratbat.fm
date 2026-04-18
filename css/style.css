@@ -41,6 +41,21 @@
   --player-bg: rgba(255,255,255,0.96);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111;
+    --fg: #f0f0f0;
+    --muted: #999;
+    --border: #2a2a2a;
+    --border-strong: #f0f0f0;
+    --hover: #1a1a1a;
+    --active: #2a2416;
+    --dot: #f55;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    --player-bg: rgba(17,17,17,0.96);
+  }
+}
+
 html { -webkit-text-size-adjust: 100%; }
 
 * { box-sizing: border-box; }
@@ -235,11 +250,48 @@ main {
   background: var(--bg);
 }
 .skin-presets {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
   gap: var(--sp-2);
 }
-.skin-picker button {
+.skin-preset {
+  font: inherit;
+  font-size: var(--font-xs);
+  color: #fff;
+  background-color: var(--hover);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  cursor: pointer;
+  aspect-ratio: 275 / 116;
+  position: relative;
+  overflow: hidden;
+  image-rendering: pixelated;
+}
+.skin-preset:hover { border-color: var(--border-strong); }
+.skin-preset.plain {
+  background: var(--bg);
+  color: var(--fg);
+  image-rendering: auto;
+}
+.skin-preset-label {
+  position: absolute;
+  left: var(--sp-1);
+  bottom: var(--sp-1);
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.7);
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+.skin-preset.plain .skin-preset-label {
+  position: static;
+  background: none;
+  font-size: var(--font-sm);
+}
+.skin-picker .skin-inputs button,
+.skin-picker .skin-upload span {
   font: inherit;
   font-size: var(--font-sm);
   background: var(--bg);
@@ -249,7 +301,7 @@ main {
   padding: var(--sp-1) var(--sp-3);
   cursor: pointer;
 }
-.skin-picker button:hover { border-color: var(--border-strong); }
+.skin-picker .skin-inputs button:hover { border-color: var(--border-strong); }
 .skin-inputs {
   display: flex;
   gap: var(--sp-2);
