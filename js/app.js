@@ -81,11 +81,58 @@ $stations.addEventListener('click', (e) => {
   select(card.dataset.id, card.dataset.url, card.dataset.name);
 });
 
-function select(id, url, name) {
+// Real FFT requires the stream to send CORS headers AND crossOrigin set
+// *before* src. We probe once per URL with a Range:0-0 GET; if it succeeds
+// in cors mode we enable the analyser, otherwise we fall through to synth.
+const corsCache = new Map();
+async function streamIsCors(url) {
+  if (corsCache.has(url)) return corsCache.get(url);
+  let ok = false;
+  try {
+    const res = await fetch(url, { method: 'GET', mode: 'cors', headers: { Range: 'bytes=0-0' } });
+    ok = res.ok || res.status === 206;
+  } catch { ok = false; }
+  corsCache.set(url, ok);
+  return ok;
+}
+
+let audioCtx = null;
+let analyser = null;
+let freqBuf = null;
+let mediaSrc = null;
+
+function ensureAnalyser() {
+  if (analyser) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  audioCtx = new Ctx();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.7;
+  freqBuf = new Uint8Array(analyser.frequencyBinCount);
+  mediaSrc = audioCtx.createMediaElementSource($audio);
+  mediaSrc.connect(analyser);
+  analyser.connect(audioCtx.destination);
+}
+
+async function select(id, url, name) {
   activeId = id;
   $stationName.textContent = name;
+  const cors = await streamIsCors(url);
+  if (cors) {
+    // crossOrigin must be set before src to enable analysis.
+    $audio.crossOrigin = 'anonymous';
+  } else {
+    $audio.removeAttribute('crossorigin');
+  }
   $audio.src = url;
-  $audio.play().catch(() => { /* autoplay policy — user can hit play */ });
+  try { await $audio.play(); } catch { /* autoplay policy — user can hit play */ }
+  if (cors) {
+    try {
+      ensureAnalyser();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (_) { analyser = null; }
+  }
   $player.hidden = false;
   syncPlayer();
   render();
@@ -202,7 +249,7 @@ window.addEventListener('ratbat:skin-applied', () => {
   if (!$stage) return;
   $stage.hidden = !document.body.classList.contains('has-skin-panel');
   // Canvas reads its box size via clientWidth; size after unhide.
-  if (!$stage.hidden) requestAnimationFrame(sizeVisCanvas);
+  if (!$stage.hidden) requestAnimationFrame(sizeAllCanvases);
 });
 
 // ---- Responsive FFT-style visualizer (stage banner) -----------------------
@@ -255,12 +302,27 @@ window.addEventListener('ratbat:skin-applied', (e) => {
 });
 
 function currentTrackString() {
-  if (!activeId) return 'RATBAT';
+  if (!activeId) return 'RATBAT FM';
   const s = stations.find((x) => x.id === activeId);
-  if (!s) return 'RATBAT';
+  if (!s) return 'RATBAT FM';
   const t = s.currentTrack;
   if (t) return `${t.artist} - ${t.title}`.toUpperCase();
   return s.name.toUpperCase();
+}
+
+// Size the track canvas so scroll speed stays consistent as the viewport
+// changes. The internal resolution is pinned to CSS height so drawImage
+// scales each 5x6 glyph sharply via imageSmoothingEnabled=false.
+function sizeTrackCanvas() {
+  if (!$track) return;
+  const cssW = Math.max(120, $track.clientWidth | 0);
+  const cssH = Math.max(12, $track.clientHeight | 0);
+  // Pick an integer glyph upscale that matches the container height.
+  const scale = Math.max(2, Math.floor(cssH / CHAR_H));
+  $track.dataset.scale = String(scale);
+  // Internal resolution = CSS size (glyphs are drawn at `scale` per native px).
+  $track.width = cssW;
+  $track.height = scale * CHAR_H;
 }
 
 function drawTrackText() {
@@ -273,29 +335,30 @@ function drawTrackText() {
   const next = currentTrackString();
   if (next !== trackString) { trackString = next; trackScroll = 0; }
 
-  const text = trackString + '   '; // gap before repeat
-  const textPx = text.length * CHAR_W;
+  const scale = Number($track.dataset.scale || 3);
+  const glyphW = CHAR_W * scale;
+  const glyphH = CHAR_H * scale;
+  const text = trackString + '     '; // gap before repeat
+  const textPx = text.length * glyphW;
   const viewPx = $track.width;
 
-  // If text fits, don't scroll. Otherwise wrap around seamlessly.
   const scrollable = textPx > viewPx;
   const offset = scrollable ? Math.floor(trackScroll) % textPx : 0;
 
-  // Draw two copies (with gap) so the scroll wraps without pop.
   for (let copy = 0; copy < (scrollable ? 2 : 1); copy++) {
     for (let i = 0; i < text.length; i++) {
       const glyph = FONT_LOOKUP[text[i]];
-      const x = i * CHAR_W - offset + copy * textPx;
-      if (x + CHAR_W < 0 || x > viewPx) continue;
-      if (!glyph) continue; // blank (space or unknown)
+      const x = i * glyphW - offset + copy * textPx;
+      if (x + glyphW < 0 || x > viewPx) continue;
+      if (!glyph) continue;
       ctx.drawImage(
         textImage,
         glyph[0], glyph[1], CHAR_W, CHAR_H,
-        x, 0, CHAR_W, CHAR_H,
+        x, 0, glyphW, glyphH,
       );
     }
   }
-  if (scrollable) trackScroll += 0.4; // px per frame ≈ 24 px/s at 60fps
+  if (scrollable) trackScroll += scale * 0.4; // speed proportional to glyph size
 }
 
 function drawVisualizer(ts) {
@@ -309,14 +372,31 @@ function drawVisualizer(ts) {
     const active = !$audio.paused && $audio.readyState >= 2;
     const t = ts / 1000;
     const n = visBars.length;
+
+    // Prefer real FFT when the AnalyserNode is connected; else synthesize.
+    let realFft = null;
+    if (analyser && freqBuf && active) {
+      analyser.getByteFrequencyData(freqBuf);
+      realFft = freqBuf;
+    }
+
     for (let i = 0; i < n; i++) {
-      const target = active
-        ? (Math.sin(t * 3 + i * 0.37) * 0.4 + Math.sin(t * 6.3 + i * 0.13) * 0.3 + 0.55) * h
-        : 0;
+      let target;
+      if (realFft) {
+        // Log-bin from the FFT so low frequencies get multiple bars.
+        const lo = Math.floor(Math.pow(i / n, 2.2) * realFft.length);
+        const hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / n, 2.2) * realFft.length));
+        let sum = 0;
+        for (let k = lo; k < hi && k < realFft.length; k++) sum += realFft[k];
+        target = (sum / Math.max(1, hi - lo)) / 255 * h * 1.4;
+      } else {
+        target = active
+          ? (Math.sin(t * 3 + i * 0.37) * 0.4 + Math.sin(t * 6.3 + i * 0.13) * 0.3 + 0.55) * h
+          : 0;
+      }
       const cur = visBars[i];
-      visBars[i] = cur + (target - cur) * (target > cur ? 0.35 : 0.1);
+      visBars[i] = cur + (target - cur) * (target > cur ? 0.45 : 0.1);
       const bh = Math.max(0, Math.min(h, visBars[i]));
-      // Segmented bars (classic Winamp style): stacked 2px blocks, palette-colored.
       const segH = 2;
       const segGap = 1;
       let drawn = 0;
@@ -333,8 +413,9 @@ function drawVisualizer(ts) {
   requestAnimationFrame(drawVisualizer);
 }
 
-window.addEventListener('resize', sizeVisCanvas);
-sizeVisCanvas();
+function sizeAllCanvases() { sizeVisCanvas(); sizeTrackCanvas(); }
+window.addEventListener('resize', sizeAllCanvases);
+sizeAllCanvases();
 requestAnimationFrame(drawVisualizer);
 
 refresh().then(schedulePoll);

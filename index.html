@@ -68,10 +68,9 @@
 
 <section class="stage" id="stage" aria-label="Now playing" hidden>
   <canvas class="stage-vis" id="stage-vis" aria-hidden="true"></canvas>
-  <div class="skin-wrap">
-    <div class="skin-titlebar"></div>
-    <div class="skin-panel" id="skin-panel" aria-hidden="true">
-      <canvas class="skin-track" id="skin-track" width="154" height="6" aria-hidden="true"></canvas>
+  <div class="stage-row">
+    <canvas class="stage-track" id="skin-track" width="600" height="36" aria-label="Now playing track"></canvas>
+    <div class="stage-controls" id="skin-panel">
       <button type="button" class="skin-cbutton skin-cb-prev" data-cmd="prev" aria-label="Previous station"></button>
       <button type="button" class="skin-cbutton skin-cb-play" data-cmd="play" aria-label="Play"></button>
       <button type="button" class="skin-cbutton skin-cb-pause" data-cmd="pause" aria-label="Pause"></button>

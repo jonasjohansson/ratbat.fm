@@ -220,13 +220,14 @@ main {
   width: 100%;
 }
 
-/* Prominent stage — the centerpiece when a skin is active. */
+/* Responsive themed player — uses the skin's palette, buttons and font,
+   but lays out fluidly across the viewport. No fixed MAIN.BMP window. */
 .stage {
+  --cbtn: 3;         /* sprite upscale factor; bigger = more prominent */
   max-width: var(--container);
-  margin: 0 auto;
+  margin: 0 auto var(--sp-4);
   padding: 0 var(--pad-page);
   display: none;
-  position: relative;
 }
 body.has-skin-panel .stage { display: block; }
 body.has-skin-panel .player { display: none; }
@@ -234,74 +235,66 @@ body.has-skin-panel .player { display: none; }
 .stage-vis {
   display: block;
   width: 100%;
-  height: 96px;
+  height: 112px;
   image-rendering: pixelated;
   background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin-bottom: var(--sp-4);
+  margin-bottom: var(--sp-3);
 }
 
-/* The panel is native 275x116 pixels; we scale it up with a wrapper. */
-.skin-wrap {
-  --skin-scale: 2;
-  width: calc(275px * var(--skin-scale));
-  height: calc(130px * var(--skin-scale));
-  margin: 0 auto var(--sp-4);
-  position: relative;
-}
-.skin-titlebar {
-  width: 275px;
-  height: 14px;
-  background: var(--skin-titlebar, transparent) no-repeat 0 -15px;
-  image-rendering: pixelated;
-  transform: scale(var(--skin-scale));
-  transform-origin: top left;
-}
-.skin-panel {
-  position: absolute;
-  top: calc(14px * var(--skin-scale));
-  left: 0;
-  width: 275px;
-  height: 116px;
-  background: var(--skin-main, transparent) no-repeat;
-  image-rendering: pixelated;
-  transform: scale(var(--skin-scale));
-  transform-origin: top left;
-}
-.skin-track {
-  position: absolute;
-  left: 112px;
-  top: 27px;
-  width: 154px;
-  height: 6px;
-  image-rendering: pixelated;
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  padding: var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
+.stage-track {
+  flex: 1;
+  min-width: 220px;
+  height: calc(12px * var(--cbtn));  /* 6 px native × cbtn */
+  max-height: 72px;
+  image-rendering: pixelated;
+  display: block;
+}
+
+.stage-controls {
+  display: flex;
+  gap: calc(2px * var(--cbtn));
+  flex-shrink: 0;
+}
+
+/* CBUTTONS sprite is 136×36 native; 5 buttons in row 0 (up), row 1 (pressed).
+   We scale via background-size; image-rendering: pixelated keeps it crisp. */
 .skin-cbutton {
-  position: absolute;
-  top: 88px;
   padding: 0;
   border: 0;
   background: var(--skin-cbuttons, none) no-repeat;
+  background-size: calc(136px * var(--cbtn)) calc(36px * var(--cbtn));
   image-rendering: pixelated;
   cursor: pointer;
   overflow: hidden;
   text-indent: -9999px;
+  flex-shrink: 0;
 }
-.skin-cbutton:active { background-position-y: -18px; }
-.skin-cb-prev  { left: 16px;  width: 23px; height: 18px; background-position: 0px 0; }
-.skin-cb-play  { left: 39px;  width: 23px; height: 18px; background-position: -23px 0; }
-.skin-cb-pause { left: 62px;  width: 23px; height: 18px; background-position: -46px 0; }
-.skin-cb-stop  { left: 85px;  width: 23px; height: 18px; background-position: -69px 0; }
-.skin-cb-next  { left: 108px; width: 22px; height: 18px; background-position: -92px 0; }
-.skin-cb-prev:active  { background-position: 0px -18px; }
-.skin-cb-play:active  { background-position: -23px -18px; }
-.skin-cb-pause:active { background-position: -46px -18px; }
-.skin-cb-stop:active  { background-position: -69px -18px; }
-.skin-cb-next:active  { background-position: -92px -18px; }
+.skin-cbutton:active { background-position-y: calc(-18px * var(--cbtn)); }
+.skin-cb-prev  { width: calc(23px * var(--cbtn)); height: calc(18px * var(--cbtn)); background-position: 0 0; }
+.skin-cb-play  { width: calc(23px * var(--cbtn)); height: calc(18px * var(--cbtn)); background-position: calc(-23px * var(--cbtn)) 0; }
+.skin-cb-pause { width: calc(23px * var(--cbtn)); height: calc(18px * var(--cbtn)); background-position: calc(-46px * var(--cbtn)) 0; }
+.skin-cb-stop  { width: calc(23px * var(--cbtn)); height: calc(18px * var(--cbtn)); background-position: calc(-69px * var(--cbtn)) 0; }
+.skin-cb-next  { width: calc(22px * var(--cbtn)); height: calc(18px * var(--cbtn)); background-position: calc(-92px * var(--cbtn)) 0; }
 
 @media (max-width: 620px) {
-  .skin-wrap { --skin-scale: 1; }
+  .stage { --cbtn: 2; }
+  .stage-vis { height: 72px; }
+}
+@media (min-width: 1100px) {
+  .stage { --cbtn: 4; }
 }
 
 .skin-toggle {
