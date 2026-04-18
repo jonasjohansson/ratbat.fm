@@ -29,6 +29,8 @@ const ICON_PLAY =
   '<svg class="icon icon--play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5v14l12-7z"/></svg>';
 const ICON_PAUSE =
   '<svg class="icon icon--pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+const ICON_LOADING =
+  '<svg class="icon icon--loading" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="42" stroke-dashoffset="28"/></svg>';
 
 // Grid geometry — aims for the shape Jonas described:
 // 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
@@ -77,27 +79,42 @@ function render() {
   $stations.style.setProperty('--rows', rows);
   $stations.style.setProperty('--count', stations.length);
 
-  const playing = !$audio.paused && $audio.readyState >= 2;
+  const playing = !$audio.paused && $audio.readyState >= 3;
+  // Loading = user asked to play (audio element has src + isn't paused)
+  // but data isn't ready yet. Covers initial fetch + mid-stream rebuffer
+  // (readyState drops back under 3 and the `waiting` event fires).
+  const loading = !!$audio.src && !$audio.paused && $audio.readyState < 3;
+
   $stations.innerHTML = stations.map((s) => {
     const active = activeId === s.id;
     const isPlaying = active && playing;
+    const isLoading = active && loading;
     const t = s.currentTrack;
-    const np = t
-      ? `<b>${escapeHtml(t.title)}</b> — ${escapeHtml(t.artist)}`
-      : 'Live';
+    const now = isLoading
+      ? `<span class="status">Connecting…</span>`
+      : t
+        ? `<b class="title">${escapeHtml(t.title)}</b><span class="artist">${escapeHtml(t.artist)}</span>`
+        : `<span class="status">Live</span>`;
+    const classes = [
+      'station',
+      active ? 'active' : '',
+      isPlaying ? 'playing' : '',
+      isLoading ? 'loading' : '',
+    ].filter(Boolean).join(' ');
     return `
       <button type="button"
-        class="station${active ? ' active' : ''}${isPlaying ? ' playing' : ''}"
+        class="${classes}"
         data-id="${escapeHtml(s.id)}"
         data-url="${escapeHtml(s.streamURL || '')}"
-        aria-pressed="${active}">
+        aria-pressed="${active}"
+        aria-busy="${isLoading}">
         <div class="head">
           <span class="dot" aria-hidden="true"></span>
           <span class="name">${escapeHtml(s.name)}</span>
         </div>
+        <div class="now">${now}</div>
         <div class="foot">
-          <div class="np">${np}</div>
-          ${ICON_PLAY}${ICON_PAUSE}
+          ${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}
         </div>
       </button>`;
   }).join('');
@@ -130,7 +147,10 @@ function stop() {
   $audio.load();
 }
 
-['play', 'pause', 'playing', 'ended', 'waiting'].forEach((ev) =>
+// Full set of events that change the "is it actually playing / is it
+// buffering / is it stalled" visible state. `loadstart` fires as soon as
+// we assign a new src, so the loading indicator appears immediately.
+['loadstart', 'canplay', 'playing', 'pause', 'waiting', 'stalled', 'ended', 'error'].forEach((ev) =>
   $audio.addEventListener(ev, render),
 );
 

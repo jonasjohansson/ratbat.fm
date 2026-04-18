@@ -71,9 +71,8 @@ main {
   cursor: pointer;
   text-align: left;
   padding: clamp(1rem, 3vmin, 2rem);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
   gap: 1rem;
   min-width: 0;
   min-height: 0;
@@ -120,17 +119,45 @@ main {
   flex: 1;
 }
 
-.station .np {
+/* Centered now-playing block — fills the middle grid row. */
+.station .now {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.3em;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
-  font-size: clamp(0.9rem, 2vmin, 1.1rem);
+  font-size: clamp(0.95rem, 2.2vmin, 1.2rem);
+}
+.station .now .title {
+  color: var(--fg);
+  font-weight: 600;
+  font-size: clamp(1rem, 2.6vmin, 1.5rem);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  max-width: 100%;
 }
-.station .np b {
-  color: var(--fg);
-  font-weight: 600;
+.station .now .artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.station .now .status {
+  color: var(--muted);
+  font-style: italic;
+}
+.station.loading .now .status {
+  animation: blink 1.4s ease-in-out infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .station .icon {
@@ -140,14 +167,25 @@ main {
   color: var(--fg);
   opacity: 0.85;
 }
-.station:not(.active) .icon--pause,
-.station:not(.playing) .icon--pause { display: none; }
+
+/* Icon visibility — exactly one of play / pause / loading shows at a time.
+   Default state (inactive): play only.
+   Active + playing: pause only.
+   Active + loading: loading spinner only.
+   Active + paused (loaded): play only. */
+.station .icon--pause,
+.station .icon--loading { display: none; }
 .station.playing .icon--play { display: none; }
+.station.playing .icon--pause { display: inline-block; }
+.station.loading .icon--play,
+.station.loading .icon--pause { display: none; }
+.station.loading .icon--loading { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .station .foot {
   display: flex;
   align-items: flex-end;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
 }
 
