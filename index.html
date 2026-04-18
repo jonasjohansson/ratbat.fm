@@ -66,15 +66,22 @@
   <p class="empty">Loading…</p>
 </main>
 
-<footer class="player" id="player" hidden>
-  <div class="skin-panel" id="skin-panel" aria-hidden="true">
-    <canvas class="skin-vis" id="skin-vis" width="76" height="16"></canvas>
-    <button type="button" class="skin-cbutton skin-cb-prev" data-cmd="prev" aria-label="Previous station"></button>
-    <button type="button" class="skin-cbutton skin-cb-play" data-cmd="play" aria-label="Play"></button>
-    <button type="button" class="skin-cbutton skin-cb-pause" data-cmd="pause" aria-label="Pause"></button>
-    <button type="button" class="skin-cbutton skin-cb-stop" data-cmd="stop" aria-label="Stop"></button>
-    <button type="button" class="skin-cbutton skin-cb-next" data-cmd="next" aria-label="Next station"></button>
+<section class="stage" id="stage" aria-label="Now playing" hidden>
+  <canvas class="stage-vis" id="stage-vis" aria-hidden="true"></canvas>
+  <div class="skin-wrap">
+    <div class="skin-titlebar"></div>
+    <div class="skin-panel" id="skin-panel" aria-hidden="true">
+      <canvas class="skin-track" id="skin-track" width="154" height="6" aria-hidden="true"></canvas>
+      <button type="button" class="skin-cbutton skin-cb-prev" data-cmd="prev" aria-label="Previous station"></button>
+      <button type="button" class="skin-cbutton skin-cb-play" data-cmd="play" aria-label="Play"></button>
+      <button type="button" class="skin-cbutton skin-cb-pause" data-cmd="pause" aria-label="Pause"></button>
+      <button type="button" class="skin-cbutton skin-cb-stop" data-cmd="stop" aria-label="Stop"></button>
+      <button type="button" class="skin-cbutton skin-cb-next" data-cmd="next" aria-label="Next station"></button>
+    </div>
   </div>
+</section>
+
+<footer class="player" id="player" hidden>
   <div class="now">
     <b id="track-title">—</b>
     <span id="track-artist"></span>

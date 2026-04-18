@@ -195,49 +195,146 @@ $skinPanel?.addEventListener('click', (e) => {
   }
 });
 
-// Visualizer — synthesized bars using the active skin's VISCOLOR palette.
-// Real FFT is gated by stream CORS, so we always render plausible bars that
-// react to play/pause state. Bars use classic Winamp 19×16 geometry.
-const $vis = document.getElementById('skin-vis');
+// Show the stage (prominent player) whenever a skin is active. Hide otherwise.
+const $stage = document.getElementById('stage');
+document.body.classList.contains('has-skin-panel') && $stage && ($stage.hidden = false);
+window.addEventListener('ratbat:skin-applied', () => {
+  if (!$stage) return;
+  $stage.hidden = !document.body.classList.contains('has-skin-panel');
+  // Canvas reads its box size via clientWidth; size after unhide.
+  if (!$stage.hidden) requestAnimationFrame(sizeVisCanvas);
+});
+
+// ---- Responsive FFT-style visualizer (stage banner) -----------------------
+// Synthesized bars driven by paused state (real FFT requires stream CORS);
+// colors pulled live from the active skin's VISCOLOR palette.
+const $vis = document.getElementById('stage-vis');
 let visColors = [];
-let visRaf = null;
-const visBars = new Array(19).fill(0);
+let visBars = [];
+const BAR_W = 6;   // px per bar (on-screen)
+const BAR_GAP = 2; // gap between bars
+
+function sizeVisCanvas() {
+  if (!$vis) return;
+  const w = Math.max(40, $vis.clientWidth | 0);
+  const h = Math.max(40, $vis.clientHeight | 0);
+  // Device-pixel-aware, but kept modest so bars stay crisp.
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  $vis.width = w * dpr;
+  $vis.height = h * dpr;
+  const ctx = $vis.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  // Resize the bar array to match.
+  const barCount = Math.max(8, Math.floor(w / (BAR_W + BAR_GAP)));
+  visBars = new Array(barCount).fill(0);
+}
+
+// ---- TEXT.BMP bitmap-font renderer ---------------------------------------
+// Winamp classic layout: 31 chars/row × 3 rows, each char 5×6 px.
+// Map only what's reliably present in classic skins; unknowns → space.
+const CHAR_W = 5, CHAR_H = 6;
+const FONT_LOOKUP = (() => {
+  const map = {};
+  const row0 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ"@';
+  const row1 = '0123456789.:()-`!_+\\/[]^&%,=$#';
+  for (let i = 0; i < row0.length; i++) map[row0[i]] = [i * CHAR_W, 0];
+  for (let i = 0; i < row1.length; i++) map[row1[i]] = [i * CHAR_W, CHAR_H];
+  return map;
+})();
+
+const $track = document.getElementById('skin-track');
+let textImage = null;
+let trackString = '';
+let trackScroll = 0;
 
 window.addEventListener('ratbat:skin-applied', (e) => {
   visColors = e.detail.viscolors || [];
+  textImage = e.detail.textImage || null;
+  trackScroll = 0;
 });
 
-function drawVisualizer(ts) {
-  const ctx = $vis.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  // Background is color 0 (typically black in viscolor.txt)
-  ctx.fillStyle = visColors[0] || '#000';
-  ctx.fillRect(0, 0, 76, 16);
+function currentTrackString() {
+  if (!activeId) return 'RATBAT';
+  const s = stations.find((x) => x.id === activeId);
+  if (!s) return 'RATBAT';
+  const t = s.currentTrack;
+  if (t) return `${t.artist} - ${t.title}`.toUpperCase();
+  return s.name.toUpperCase();
+}
 
-  const active = !$audio.paused && $audio.readyState >= 2;
-  const t = ts / 1000;
-  for (let i = 0; i < 19; i++) {
-    // Drive each bar with a mix of sines so adjacent bars differ.
-    const target = active
-      ? (Math.sin(t * 3 + i * 0.9) * 0.4 + Math.sin(t * 6.3 + i * 0.33) * 0.3 + 0.55) * 16
-      : 0;
-    // Ease toward target (attack/decay)
-    const cur = visBars[i];
-    visBars[i] = cur + (target - cur) * (target > cur ? 0.35 : 0.12);
-    const h = Math.max(0, Math.min(16, Math.round(visBars[i])));
-    for (let y = 0; y < h; y++) {
-      // Map y (0 = bottom) to color index 17 (bottom) down to 2 (top).
-      const idx = 17 - Math.floor((y / 15) * 15);
-      ctx.fillStyle = visColors[idx] || '#0f0';
-      ctx.fillRect(i * 4, 16 - y - 1, 3, 1);
+function drawTrackText() {
+  if (!$track) return;
+  const ctx = $track.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, $track.width, $track.height);
+  if (!textImage) return;
+
+  const next = currentTrackString();
+  if (next !== trackString) { trackString = next; trackScroll = 0; }
+
+  const text = trackString + '   '; // gap before repeat
+  const textPx = text.length * CHAR_W;
+  const viewPx = $track.width;
+
+  // If text fits, don't scroll. Otherwise wrap around seamlessly.
+  const scrollable = textPx > viewPx;
+  const offset = scrollable ? Math.floor(trackScroll) % textPx : 0;
+
+  // Draw two copies (with gap) so the scroll wraps without pop.
+  for (let copy = 0; copy < (scrollable ? 2 : 1); copy++) {
+    for (let i = 0; i < text.length; i++) {
+      const glyph = FONT_LOOKUP[text[i]];
+      const x = i * CHAR_W - offset + copy * textPx;
+      if (x + CHAR_W < 0 || x > viewPx) continue;
+      if (!glyph) continue; // blank (space or unknown)
+      ctx.drawImage(
+        textImage,
+        glyph[0], glyph[1], CHAR_W, CHAR_H,
+        x, 0, CHAR_W, CHAR_H,
+      );
     }
   }
-  visRaf = requestAnimationFrame(drawVisualizer);
+  if (scrollable) trackScroll += 0.4; // px per frame ≈ 24 px/s at 60fps
 }
 
-if ($vis) {
-  $vis.getContext('2d').imageSmoothingEnabled = false;
-  visRaf = requestAnimationFrame(drawVisualizer);
+function drawVisualizer(ts) {
+  if ($vis) {
+    const ctx = $vis.getContext('2d');
+    const w = $vis.clientWidth;
+    const h = $vis.clientHeight;
+    ctx.fillStyle = visColors[0] || 'rgba(0,0,0,0)';
+    ctx.fillRect(0, 0, w, h);
+
+    const active = !$audio.paused && $audio.readyState >= 2;
+    const t = ts / 1000;
+    const n = visBars.length;
+    for (let i = 0; i < n; i++) {
+      const target = active
+        ? (Math.sin(t * 3 + i * 0.37) * 0.4 + Math.sin(t * 6.3 + i * 0.13) * 0.3 + 0.55) * h
+        : 0;
+      const cur = visBars[i];
+      visBars[i] = cur + (target - cur) * (target > cur ? 0.35 : 0.1);
+      const bh = Math.max(0, Math.min(h, visBars[i]));
+      // Segmented bars (classic Winamp style): stacked 2px blocks, palette-colored.
+      const segH = 2;
+      const segGap = 1;
+      let drawn = 0;
+      for (let y = h - segH; drawn < bh && y >= 0; y -= (segH + segGap)) {
+        const fractionFromBottom = (h - y) / h;
+        const paletteIdx = 17 - Math.floor(fractionFromBottom * 15);
+        ctx.fillStyle = visColors[paletteIdx] || '#0f0';
+        ctx.fillRect(i * (BAR_W + BAR_GAP), y, BAR_W, segH);
+        drawn += segH + segGap;
+      }
+    }
+  }
+  drawTrackText();
+  requestAnimationFrame(drawVisualizer);
 }
+
+window.addEventListener('resize', sizeVisCanvas);
+sizeVisCanvas();
+requestAnimationFrame(drawVisualizer);
 
 refresh().then(schedulePoll);

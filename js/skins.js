@@ -9,11 +9,14 @@
   const THEMED_VARS = [
     '--bg', '--fg', '--muted', '--border', '--border-strong',
     '--hover', '--active', '--dot', '--player-bg',
-    '--skin-main', '--skin-cbuttons',
+    '--skin-main', '--skin-cbuttons', '--skin-titlebar',
   ];
 
   // Live blob URLs for the current skin's bitmaps; revoked on next apply.
-  let assets = { mainUrl: null, cbuttonsUrl: null };
+  let assets = {
+    mainUrl: null, cbuttonsUrl: null, titlebarUrl: null,
+    textUrl: null, textImage: null,
+  };
 
   const td = new TextDecoder('latin1'); // classic skins are latin1
 
@@ -148,7 +151,24 @@
   function revokeAssets() {
     if (assets.mainUrl) URL.revokeObjectURL(assets.mainUrl);
     if (assets.cbuttonsUrl) URL.revokeObjectURL(assets.cbuttonsUrl);
-    assets = { mainUrl: null, cbuttonsUrl: null };
+    if (assets.titlebarUrl) URL.revokeObjectURL(assets.titlebarUrl);
+    if (assets.textUrl) URL.revokeObjectURL(assets.textUrl);
+    assets = {
+      mainUrl: null, cbuttonsUrl: null, titlebarUrl: null,
+      textUrl: null, textImage: null,
+    };
+  }
+
+  const blobUrl = (bytes, mime = 'image/bmp') =>
+    bytes ? URL.createObjectURL(new Blob([bytes], { type: mime })) : null;
+
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
   }
 
   async function applySkin(source) {
@@ -158,6 +178,8 @@
     const plBytes = findFile(files, 'pledit.txt');
     const mainBytes = findFile(files, 'main.bmp');
     const cbBytes = findFile(files, 'cbuttons.bmp');
+    const titleBytes = findFile(files, 'titlebar.bmp');
+    const textBytes = findFile(files, 'text.bmp');
     const vis = visBytes ? parseVisColor(td.decode(visBytes)) : [];
     const pl = plBytes ? parsePlEdit(td.decode(plBytes)) : {};
 
@@ -177,23 +199,33 @@
     applyPalette({ bgRGB, fgRGB, selectedRGB, accentRGB });
 
     revokeAssets();
-    assets.mainUrl = mainBytes
-      ? URL.createObjectURL(new Blob([mainBytes], { type: 'image/bmp' }))
-      : null;
-    assets.cbuttonsUrl = cbBytes
-      ? URL.createObjectURL(new Blob([cbBytes], { type: 'image/bmp' }))
-      : null;
+    assets.mainUrl = blobUrl(mainBytes);
+    assets.cbuttonsUrl = blobUrl(cbBytes);
+    assets.titlebarUrl = blobUrl(titleBytes);
+    assets.textUrl = blobUrl(textBytes);
+
+    // TEXT.BMP is needed as an actual Image for drawImage/clipping.
+    if (assets.textUrl) {
+      try { assets.textImage = await loadImage(assets.textUrl); }
+      catch (_) { assets.textImage = null; }
+    }
 
     const rootStyle = document.documentElement.style;
-    if (assets.mainUrl) rootStyle.setProperty('--skin-main', `url(${assets.mainUrl})`);
-    else rootStyle.removeProperty('--skin-main');
-    if (assets.cbuttonsUrl) rootStyle.setProperty('--skin-cbuttons', `url(${assets.cbuttonsUrl})`);
-    else rootStyle.removeProperty('--skin-cbuttons');
+    const setVar = (name, url) => {
+      if (url) rootStyle.setProperty(name, `url(${url})`);
+      else rootStyle.removeProperty(name);
+    };
+    setVar('--skin-main', assets.mainUrl);
+    setVar('--skin-cbuttons', assets.cbuttonsUrl);
+    setVar('--skin-titlebar', assets.titlebarUrl);
 
     document.body.classList.toggle('has-skin-panel', !!(assets.mainUrl && assets.cbuttonsUrl));
 
     window.dispatchEvent(new CustomEvent('ratbat:skin-applied', {
-      detail: { viscolors: vis.map(([r, g, b]) => `rgb(${r},${g},${b})`) },
+      detail: {
+        viscolors: vis.map(([r, g, b]) => `rgb(${r},${g},${b})`),
+        textImage: assets.textImage,
+      },
     }));
   }
 
