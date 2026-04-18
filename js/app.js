@@ -176,4 +176,68 @@ $skinUrlInput?.addEventListener('keydown', async (e) => {
 
 window.ratbatSkins.initialLoad();
 
+// Skin-panel controls (prev/play/pause/stop/next). Prev/next cycle stations.
+const $skinPanel = document.getElementById('skin-panel');
+$skinPanel?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-cmd]');
+  if (!btn) return;
+  const cmd = btn.dataset.cmd;
+  if (cmd === 'play') $audio.play().catch(() => {});
+  else if (cmd === 'pause') $audio.pause();
+  else if (cmd === 'stop') { $audio.pause(); $audio.currentTime = 0; }
+  else if (cmd === 'prev' || cmd === 'next') {
+    if (!stations.length) return;
+    const idx = stations.findIndex((s) => s.id === activeId);
+    const delta = cmd === 'next' ? 1 : -1;
+    const nextIdx = (idx + delta + stations.length) % stations.length;
+    const s = stations[nextIdx];
+    select(s.id, s.streamURL, s.name);
+  }
+});
+
+// Visualizer — synthesized bars using the active skin's VISCOLOR palette.
+// Real FFT is gated by stream CORS, so we always render plausible bars that
+// react to play/pause state. Bars use classic Winamp 19×16 geometry.
+const $vis = document.getElementById('skin-vis');
+let visColors = [];
+let visRaf = null;
+const visBars = new Array(19).fill(0);
+
+window.addEventListener('ratbat:skin-applied', (e) => {
+  visColors = e.detail.viscolors || [];
+});
+
+function drawVisualizer(ts) {
+  const ctx = $vis.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  // Background is color 0 (typically black in viscolor.txt)
+  ctx.fillStyle = visColors[0] || '#000';
+  ctx.fillRect(0, 0, 76, 16);
+
+  const active = !$audio.paused && $audio.readyState >= 2;
+  const t = ts / 1000;
+  for (let i = 0; i < 19; i++) {
+    // Drive each bar with a mix of sines so adjacent bars differ.
+    const target = active
+      ? (Math.sin(t * 3 + i * 0.9) * 0.4 + Math.sin(t * 6.3 + i * 0.33) * 0.3 + 0.55) * 16
+      : 0;
+    // Ease toward target (attack/decay)
+    const cur = visBars[i];
+    visBars[i] = cur + (target - cur) * (target > cur ? 0.35 : 0.12);
+    const h = Math.max(0, Math.min(16, Math.round(visBars[i])));
+    for (let y = 0; y < h; y++) {
+      // Map y (0 = bottom) to color index 17 (bottom) down to 2 (top).
+      const idx = 17 - Math.floor((y / 15) * 15);
+      ctx.fillStyle = visColors[idx] || '#0f0';
+      ctx.fillRect(i * 4, 16 - y - 1, 3, 1);
+    }
+  }
+  visRaf = requestAnimationFrame(drawVisualizer);
+}
+
+if ($vis) {
+  $vis.getContext('2d').imageSmoothingEnabled = false;
+  visRaf = requestAnimationFrame(drawVisualizer);
+}
+
 refresh().then(schedulePoll);

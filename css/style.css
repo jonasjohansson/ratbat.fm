@@ -220,6 +220,52 @@ main {
   width: 100%;
 }
 
+/* Winamp-style composited panel — only shown when a skin is active. */
+.skin-panel {
+  width: 275px;
+  height: 116px;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--skin-main, transparent) no-repeat;
+  image-rendering: pixelated;
+  display: none;
+}
+body.has-skin-panel .skin-panel { display: block; }
+body.has-skin-panel .player .now,
+body.has-skin-panel .player audio { display: none; }
+
+.skin-vis {
+  position: absolute;
+  left: 24px;
+  top: 43px;
+  width: 76px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
+.skin-cbutton {
+  position: absolute;
+  top: 88px;
+  padding: 0;
+  border: 0;
+  background: var(--skin-cbuttons, none) no-repeat;
+  image-rendering: pixelated;
+  cursor: pointer;
+  overflow: hidden;
+  text-indent: -9999px;
+}
+.skin-cbutton:active { background-position-y: -18px; }
+.skin-cb-prev  { left: 16px;  width: 23px; height: 18px; background-position: 0px 0; }
+.skin-cb-play  { left: 39px;  width: 23px; height: 18px; background-position: -23px 0; }
+.skin-cb-pause { left: 62px;  width: 23px; height: 18px; background-position: -46px 0; }
+.skin-cb-stop  { left: 85px;  width: 23px; height: 18px; background-position: -69px 0; }
+.skin-cb-next  { left: 108px; width: 22px; height: 18px; background-position: -92px 0; }
+.skin-cb-prev:active  { background-position: 0px -18px; }
+.skin-cb-play:active  { background-position: -23px -18px; }
+.skin-cb-pause:active { background-position: -46px -18px; }
+.skin-cb-stop:active  { background-position: -69px -18px; }
+.skin-cb-next:active  { background-position: -92px -18px; }
+
 .skin-toggle {
   font: inherit;
   font-size: var(--font-sm);

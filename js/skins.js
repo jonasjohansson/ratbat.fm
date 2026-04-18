@@ -9,7 +9,11 @@
   const THEMED_VARS = [
     '--bg', '--fg', '--muted', '--border', '--border-strong',
     '--hover', '--active', '--dot', '--player-bg',
+    '--skin-main', '--skin-cbuttons',
   ];
+
+  // Live blob URLs for the current skin's bitmaps; revoked on next apply.
+  let assets = { mainUrl: null, cbuttonsUrl: null };
 
   const td = new TextDecoder('latin1'); // classic skins are latin1
 
@@ -22,6 +26,14 @@
   const toHex = ([r, g, b]) =>
     '#' + [r, g, b].map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
   const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  const luminance = ([r, g, b]) =>
+    0.2126 * (r / 255) + 0.7152 * (g / 255) + 0.0722 * (b / 255);
+  // Skin palettes target Winamp's tiny playlist, so fg can be near-bg.
+  // Nudge toward white/black when contrast is too low to read.
+  const ensureContrast = (bg, fg, min = 0.35) => {
+    if (Math.abs(luminance(bg) - luminance(fg)) >= min) return fg;
+    return luminance(bg) < 0.5 ? [240, 240, 240] : [20, 20, 20];
+  };
 
   // Find a file in the unzipped dict by case-insensitive basename.
   const findFile = (files, name) => {
@@ -115,7 +127,7 @@
   function applyPalette({ bgRGB, fgRGB, selectedRGB, accentRGB }) {
     const root = document.documentElement.style;
     const bg = bgRGB;
-    const fg = fgRGB;
+    const fg = ensureContrast(bgRGB, fgRGB);
     root.setProperty('--bg', toHex(bg));
     root.setProperty('--fg', toHex(fg));
     root.setProperty('--muted', toHex(mix(bg, fg, 0.55)));
@@ -133,12 +145,19 @@
     if (meta) meta.setAttribute('content', toHex(bg));
   }
 
+  function revokeAssets() {
+    if (assets.mainUrl) URL.revokeObjectURL(assets.mainUrl);
+    if (assets.cbuttonsUrl) URL.revokeObjectURL(assets.cbuttonsUrl);
+    assets = { mainUrl: null, cbuttonsUrl: null };
+  }
+
   async function applySkin(source) {
     const buf = await loadBuffer(source);
     const files = await unzipWsz(buf);
     const visBytes = findFile(files, 'viscolor.txt');
     const plBytes = findFile(files, 'pledit.txt');
     const mainBytes = findFile(files, 'main.bmp');
+    const cbBytes = findFile(files, 'cbuttons.bmp');
     const vis = visBytes ? parseVisColor(td.decode(visBytes)) : [];
     const pl = plBytes ? parsePlEdit(td.decode(plBytes)) : {};
 
@@ -146,8 +165,6 @@
     const fgRGB = parseHex(pl.Normal || '#00ff00') || [0, 255, 0];
     const selectedRGB = parseHex(pl.SelectedBG || '') || null;
 
-    // Prefer a sampled accent from MAIN.BMP (matches what the eye sees);
-    // fall back to viscolor[2] (classic top-of-spectrum red).
     let accentRGB = null;
     if (mainBytes) {
       try {
@@ -158,6 +175,26 @@
     if (!accentRGB) accentRGB = vis[2] || null;
 
     applyPalette({ bgRGB, fgRGB, selectedRGB, accentRGB });
+
+    revokeAssets();
+    assets.mainUrl = mainBytes
+      ? URL.createObjectURL(new Blob([mainBytes], { type: 'image/bmp' }))
+      : null;
+    assets.cbuttonsUrl = cbBytes
+      ? URL.createObjectURL(new Blob([cbBytes], { type: 'image/bmp' }))
+      : null;
+
+    const rootStyle = document.documentElement.style;
+    if (assets.mainUrl) rootStyle.setProperty('--skin-main', `url(${assets.mainUrl})`);
+    else rootStyle.removeProperty('--skin-main');
+    if (assets.cbuttonsUrl) rootStyle.setProperty('--skin-cbuttons', `url(${assets.cbuttonsUrl})`);
+    else rootStyle.removeProperty('--skin-cbuttons');
+
+    document.body.classList.toggle('has-skin-panel', !!(assets.mainUrl && assets.cbuttonsUrl));
+
+    window.dispatchEvent(new CustomEvent('ratbat:skin-applied', {
+      detail: { viscolors: vis.map(([r, g, b]) => `rgb(${r},${g},${b})`) },
+    }));
   }
 
   function resetSkin() {
@@ -165,6 +202,9 @@
     THEMED_VARS.forEach((v) => root.removeProperty(v));
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#ffffff');
+    revokeAssets();
+    document.body.classList.remove('has-skin-panel');
+    window.dispatchEvent(new CustomEvent('ratbat:skin-applied', { detail: { viscolors: [] } }));
   }
 
   // spec: { kind: 'reset' } | { kind: 'url', url } | { kind: 'file', file }
