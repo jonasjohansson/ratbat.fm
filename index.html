@@ -19,75 +19,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest.json">
 <link rel="stylesheet" href="css/style.css">
-<script src="js/lib/fflate.min.js" defer></script>
-<script src="js/skins.js" defer></script>
 <script src="js/app.js" defer></script>
 </head>
 <body>
-
-<header>
-  <h1>Ratbat</h1>
-  <p>Personal radio. <button type="button" class="skin-toggle" id="skin-toggle" aria-expanded="false" aria-controls="skin-picker">Skin</button></p>
-  <div class="skin-picker" id="skin-picker" hidden>
-    <div class="skin-presets">
-      <button type="button" class="skin-preset plain" data-skin-reset>
-        <span class="skin-preset-label">Plain</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="/skins/base.wsz" style="background-image:url('/skins/thumbs/base.png')">
-        <span class="skin-preset-label">Classic</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskin_Classic_Green_1/Classic_Green_1.wsz" style="background-image:url('/skins/thumbs/classic-green.png')">
-        <span class="skin-preset-label">Classic Green</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_bento_classic/bento_classic.wsz" style="background-image:url('/skins/thumbs/bento.png')">
-        <span class="skin-preset-label">Bento</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_Green-Amp/Green-Amp.wsz" style="background-image:url('/skins/thumbs/green-amp.png')">
-        <span class="skin-preset-label">Green-Amp</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_nucleo/nucleo.wsz" style="background-image:url('/skins/thumbs/nucleo.png')">
-        <span class="skin-preset-label">Nucleo</span>
-      </button>
-      <button type="button" class="skin-preset" data-skin-url="https://archive.org/download/winampskins_Deep_Space_9/Deep%20Space%209.wsz" style="background-image:url('/skins/thumbs/deep-space-9.png')">
-        <span class="skin-preset-label">Deep Space 9</span>
-      </button>
-    </div>
-    <div class="skin-inputs">
-      <label class="skin-upload">
-        <input type="file" accept=".wsz,application/zip" id="skin-file" hidden>
-        <span>Upload .wsz</span>
-      </label>
-      <input type="url" class="skin-url-input" id="skin-url-input" placeholder="…or paste .wsz URL and press Enter">
-    </div>
-  </div>
-</header>
 
 <main id="stations" aria-label="Live stations" aria-live="polite">
   <p class="empty">Loading…</p>
 </main>
 
-<section class="stage" id="stage" aria-label="Now playing" hidden>
-  <canvas class="stage-vis" id="stage-vis" aria-hidden="true"></canvas>
-  <div class="stage-row">
-    <canvas class="stage-track" id="skin-track" width="600" height="36" aria-label="Now playing track"></canvas>
-    <div class="stage-controls" id="skin-panel">
-      <button type="button" class="skin-cbutton skin-cb-prev" data-cmd="prev" aria-label="Previous station"></button>
-      <button type="button" class="skin-cbutton skin-cb-play" data-cmd="play" aria-label="Play"></button>
-      <button type="button" class="skin-cbutton skin-cb-pause" data-cmd="pause" aria-label="Pause"></button>
-      <button type="button" class="skin-cbutton skin-cb-stop" data-cmd="stop" aria-label="Stop"></button>
-      <button type="button" class="skin-cbutton skin-cb-next" data-cmd="next" aria-label="Next station"></button>
-    </div>
-  </div>
-</section>
-
-<footer class="player" id="player" hidden>
-  <div class="now">
-    <b id="track-title">—</b>
-    <span id="track-artist"></span>
-    <small id="active-station-name"></small>
-  </div>
-  <audio id="audio" controls aria-label="Radio player"></audio>
-</footer>
+<audio id="audio" aria-hidden="true"></audio>
 
 </body>
 </html>
