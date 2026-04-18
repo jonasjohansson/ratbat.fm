@@ -134,4 +134,46 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refresh();
 });
 
+// Skin picker
+const $skinToggle = document.getElementById('skin-toggle');
+const $skinPicker = document.getElementById('skin-picker');
+const $skinFile = document.getElementById('skin-file');
+const $skinUrlInput = document.getElementById('skin-url-input');
+
+$skinToggle?.addEventListener('click', () => {
+  const open = $skinPicker.hasAttribute('hidden');
+  if (open) $skinPicker.removeAttribute('hidden');
+  else $skinPicker.setAttribute('hidden', '');
+  $skinToggle.setAttribute('aria-expanded', String(open));
+});
+
+$skinPicker?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-skin-url], button[data-skin-reset]');
+  if (!btn) return;
+  try {
+    if (btn.hasAttribute('data-skin-reset')) {
+      await window.ratbatSkins.applyAndSave({ kind: 'reset' });
+    } else {
+      await window.ratbatSkins.applyAndSave({ kind: 'url', url: btn.dataset.skinUrl });
+    }
+  } catch (err) { console.warn('skin failed:', err); }
+});
+
+$skinFile?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try { await window.ratbatSkins.applyAndSave({ kind: 'file', file }); }
+  catch (err) { console.warn('skin failed:', err); }
+});
+
+$skinUrlInput?.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  const url = e.target.value.trim();
+  if (!url) return;
+  try { await window.ratbatSkins.applyAndSave({ kind: 'url', url }); }
+  catch (err) { console.warn('skin failed:', err); }
+});
+
+window.ratbatSkins.initialLoad();
+
 refresh().then(schedulePoll);

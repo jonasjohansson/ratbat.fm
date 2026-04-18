@@ -36,6 +36,9 @@
   /* layout */
   --pad-page: var(--sp-5);
   --player-pad-bottom: 6rem;
+
+  /* themeable by skin loader */
+  --player-bg: rgba(255,255,255,0.96);
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -161,7 +164,7 @@ main {
   bottom: 0;
   left: 0;
   right: 0;
-  background: rgba(255,255,255,0.96);
+  background: var(--player-bg);
   backdrop-filter: saturate(180%) blur(8px);
   -webkit-backdrop-filter: saturate(180%) blur(8px);
   border-top: 1px solid var(--border);
@@ -201,6 +204,80 @@ main {
   flex: 1;
   width: 100%;
 }
+
+.skin-toggle {
+  font: inherit;
+  font-size: var(--font-sm);
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0 var(--sp-2);
+  margin-left: var(--sp-2);
+  cursor: pointer;
+  line-height: 1.6;
+}
+.skin-toggle:hover { border-color: var(--border-strong); color: var(--fg); }
+.skin-toggle[aria-expanded="true"] {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+.skin-picker[hidden] { display: none; }
+.skin-picker {
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  background: var(--bg);
+}
+.skin-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.skin-picker button {
+  font: inherit;
+  font-size: var(--font-sm);
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+}
+.skin-picker button:hover { border-color: var(--border-strong); }
+.skin-inputs {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.skin-upload span {
+  display: inline-block;
+  font-size: var(--font-sm);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.skin-upload:hover span { border-color: var(--border-strong); color: var(--fg); }
+.skin-url-input {
+  flex: 1;
+  min-width: 12rem;
+  font: inherit;
+  font-size: var(--font-sm);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.skin-url-input:focus { outline: 2px solid var(--border-strong); outline-offset: 1px; }
 
 @media (max-width: 640px) {
   :root {

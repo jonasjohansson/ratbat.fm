@@ -19,13 +19,32 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest.json">
 <link rel="stylesheet" href="css/style.css">
+<script src="js/lib/fflate.min.js" defer></script>
+<script src="js/skins.js" defer></script>
 <script src="js/app.js" defer></script>
 </head>
 <body>
 
 <header>
   <h1>Ratbat</h1>
-  <p>Personal radio.</p>
+  <p>Personal radio. <button type="button" class="skin-toggle" id="skin-toggle" aria-expanded="false" aria-controls="skin-picker">Skin</button></p>
+  <div class="skin-picker" id="skin-picker" hidden>
+    <div class="skin-presets">
+      <button type="button" data-skin-reset>Plain</button>
+      <button type="button" data-skin-url="/skins/base.wsz">Classic</button>
+      <button type="button" data-skin-url="https://archive.org/download/winampskin_Classic_Green_1/Classic_Green_1.wsz">Classic Green</button>
+      <button type="button" data-skin-url="https://archive.org/download/winampskins_bento_classic/bento_classic.wsz">Bento</button>
+      <button type="button" data-skin-url="https://archive.org/download/winampskin_Bento_Classified/Bento_Classified.wsz">Bento Classified</button>
+      <button type="button" data-skin-url="https://archive.org/download/winampskins_Green-Amp/Green-Amp.wsz">Green-Amp</button>
+    </div>
+    <div class="skin-inputs">
+      <label class="skin-upload">
+        <input type="file" accept=".wsz,application/zip" id="skin-file" hidden>
+        <span>Upload .wsz</span>
+      </label>
+      <input type="url" class="skin-url-input" id="skin-url-input" placeholder="…or paste .wsz URL and press Enter">
+    </div>
+  </div>
 </header>
 
 <main id="stations" aria-label="Live stations" aria-live="polite">
