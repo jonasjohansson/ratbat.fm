@@ -69,6 +69,9 @@ main {
   color: var(--fg);
   font: inherit;
   cursor: pointer;
+  /* was a <button>; the div needs selection suppressed for double-tap */
+  user-select: none;
+  -webkit-user-select: none;
   text-align: left;
   padding: clamp(1rem, 3vmin, 2rem);
   display: grid;
@@ -187,6 +190,37 @@ main {
   align-items: flex-end;
   justify-content: flex-end;
   gap: 1rem;
+}
+.station .foot .actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  margin-right: auto;
+}
+.station .act {
+  border: none;
+  background: none;
+  padding: 0.4rem;
+  margin: 0;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+.station .act:hover { opacity: 0.9; }
+.station .act:disabled { opacity: 0.2; cursor: default; }
+.station .act:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+.station .act .icon {
+  width: clamp(1.5rem, 3.4vmin, 2.4rem);
+  height: clamp(1.5rem, 3.4vmin, 2.4rem);
+  display: block;
+}
+.station .act--like.liked {
+  color: var(--dot);
+  opacity: 1;
 }
 
 /* force 1-col layout on narrow viewports regardless of station count */

@@ -19,6 +19,16 @@ const API_BASE = resolveAPIBase();
 let stations = [];
 let activeId = null;
 
+// ♥ state is keyed on station + track so the filled heart resets itself
+// when the station moves on. Session-scoped on purpose: the server is the
+// durable record (the file lands in the library), this is just button UI.
+const likedKeys = new Set();
+// Stations with a like/skip request in flight — blocks double-fire.
+const actionBusy = new Set();
+
+const trackKey = (s) =>
+  s.currentTrack ? `${s.id}|${s.currentTrack.artist}|${s.currentTrack.title}` : null;
+
 const $stations = document.getElementById('stations');
 const $audio = document.getElementById('audio');
 
@@ -31,6 +41,12 @@ const ICON_PAUSE =
   '<svg class="icon icon--pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
 const ICON_LOADING =
   '<svg class="icon icon--loading" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="42" stroke-dashoffset="28"/></svg>';
+const ICON_HEART =
+  '<svg class="icon icon--heart" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>';
+const ICON_HEART_FILLED =
+  '<svg class="icon icon--heart-filled" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>';
+const ICON_THUMBSDOWN =
+  '<svg class="icon icon--skip" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M16 3H7.5L5 11v2h6l-1 5.5 1.5 1.5 4.5-7V3zm0 0h3v10h-3"/></svg>';
 
 // Grid geometry — aims for the shape Jonas described:
 // 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
@@ -101,8 +117,27 @@ function render() {
       isPlaying ? 'playing' : '',
       isLoading ? 'loading' : '',
     ].filter(Boolean).join(' ');
+    // ♥ / 👎 only on the active card — you judge what you're hearing.
+    // (The server agrees: /like and /skip 404 without a current track.)
+    // Real <button>s can't nest, so the card is a div[role=button] and
+    // the action buttons stop the card's play/pause toggle themselves.
+    const liked = likedKeys.has(trackKey(s));
+    const actions = active && t
+      ? `<span class="actions">
+          <button type="button" class="act act--like${liked ? ' liked' : ''}"
+            aria-label="${liked ? 'Saved to library' : 'Save to library'}"
+            ${actionBusy.has(s.id) ? 'disabled' : ''}>
+            ${liked ? ICON_HEART_FILLED : ICON_HEART}
+          </button>
+          <button type="button" class="act act--skip"
+            aria-label="Skip this track"
+            ${actionBusy.has(s.id) ? 'disabled' : ''}>
+            ${ICON_THUMBSDOWN}
+          </button>
+        </span>`
+      : '';
     return `
-      <button type="button"
+      <div role="button" tabindex="0"
         class="${classes}"
         data-id="${escapeHtml(s.id)}"
         data-url="${escapeHtml(s.streamURL || '')}"
@@ -114,17 +149,59 @@ function render() {
         </div>
         <div class="now">${now}</div>
         <div class="foot">
-          ${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}
+          ${actions}
+          <span class="transport">${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}</span>
         </div>
-      </button>`;
+      </div>`;
   }).join('');
 }
 
 $stations.addEventListener('click', (e) => {
   const card = e.target.closest('.station');
   if (!card) return;
+  const act = e.target.closest('.act');
+  if (act) {
+    sendAction(card.dataset.id, act.classList.contains('act--like') ? 'like' : 'skip');
+    return;
+  }
   toggle(card.dataset.id, card.dataset.url);
 });
+
+// div[role=button] doesn't get click-on-Enter/Space for free the way a
+// real <button> did — restore it so the cards stay keyboard-operable.
+$stations.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const card = e.target.closest('.station');
+  if (!card || e.target.closest('.act')) return;
+  e.preventDefault();
+  toggle(card.dataset.id, card.dataset.url);
+});
+
+// POST ♥ or 👎 for the station's current track. The body wants the
+// station's UUID (`id` from /now.json), not the slug. On a saved like,
+// remember the track key so the heart stays filled until the station
+// moves on; on a skip, poll sooner so the advance shows up fast.
+async function sendAction(id, kind) {
+  if (actionBusy.has(id)) return;
+  actionBusy.add(id);
+  render();
+  try {
+    const res = await fetch(`${API_BASE}/${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ station: id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (kind === 'like' && res.ok && data.status === 'saved') {
+      const s = stations.find((x) => x.id === id);
+      const key = trackKey(s);
+      if (key) likedKeys.add(key);
+    }
+  } catch { /* transient — the button simply un-busies */ }
+  actionBusy.delete(id);
+  render();
+  if (kind === 'skip') setTimeout(refresh, 1200);
+}
 
 async function toggle(id, url) {
   if (activeId === id) {
