@@ -213,6 +213,35 @@ function render() {
               : '')}
         </span>`
       : '';
+    // Timeline on the active card: the certain next track, then what
+    // just played (each row retro-♥-able for the owner, linkable for
+    // everyone). Recent rows still inside the display-lag window are
+    // suppressed — the card's now-playing is still showing them.
+    const shownKey = (displayState.get(s.id) || {}).shownKey;
+    const links = (o) => [
+      o.sourceURL ? `<a class="tlink" href="${escapeHtml(o.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
+      o.youtubeURL ? `<a class="tlink" href="${escapeHtml(o.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
+    ].join('');
+    const recentRows = (s.recent || [])
+      .filter((r) => `${s.id}|${r.artist}|${r.title}` !== shownKey)
+      .slice(0, 4)
+      .map((r) => `
+        <li>
+          ${ownerKey()
+            ? `<button type="button" class="act act--retro" data-entry="${escapeHtml(r.entryID)}" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
+            : ''}
+          <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
+          ${links(r)}
+        </li>`).join('');
+    const timeline = active && (s.nextTrack || recentRows)
+      ? `<div class="timeline">
+          ${s.nextTrack ? `<div class="tnext">Next: ${escapeHtml(s.nextTrack.artist)} — ${escapeHtml(s.nextTrack.title)}</div>` : ''}
+          ${recentRows ? `<ul class="trecent">${recentRows}</ul>` : ''}
+        </div>`
+      : '';
+    const nowLinks = active && t && (t.sourceURL || t.youtubeURL)
+      ? `<span class="nowlinks">${links(t)}</span>`
+      : '';
     return `
       <div role="button" tabindex="0"
         class="${classes}"
@@ -224,7 +253,8 @@ function render() {
           <span class="dot" aria-hidden="true"></span>
           <span class="name">${escapeHtml(s.name)}</span>
         </div>
-        <div class="now">${now}</div>
+        <div class="now">${now}${nowLinks}</div>
+        ${timeline}
         <div class="foot">
           ${actions}
           <span class="transport">${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}</span>
@@ -234,12 +264,18 @@ function render() {
 }
 
 $stations.addEventListener('click', (e) => {
+  // Provenance links navigate; they must not toggle playback.
+  if (e.target.closest('a')) return;
   const card = e.target.closest('.station');
   if (!card) return;
   const act = e.target.closest('.act');
   if (act) {
     if (act.classList.contains('act--share')) {
       shareTrack(card.dataset.id);
+      return;
+    }
+    if (act.classList.contains('act--retro')) {
+      sendAction(card.dataset.id, 'like', act.dataset.entry);
       return;
     }
     const kind = act.classList.contains('act--like') ? 'like'
@@ -289,7 +325,7 @@ const timeoutSignal = (ms) =>
 // until the track changes; 👎 dislikes AND advances (taste blacklist);
 // ⏭ advances with no judgement recorded. Timeboxed: a hung request must
 // un-busy the button, not dim it forever.
-async function sendAction(id, kind) {
+async function sendAction(id, kind, entry) {
   if (actionBusy.has(id)) return;
   actionBusy.add(id);
   render();
@@ -297,7 +333,7 @@ async function sendAction(id, kind) {
     const res = await fetch(`${API_BASE}/${kind}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ station: id, token: ownerKey() }),
+      body: JSON.stringify({ station: id, token: ownerKey(), entry: entry || undefined }),
       signal: timeoutSignal(8000),
     });
     const data = await res.json().catch(() => ({}));
@@ -314,11 +350,17 @@ async function sendAction(id, kind) {
       // 'saved' = downloaded into the library; 'noted' = already owned,
       // affinity recorded ("♥ always means more like this" — the
       // download is just a side effect when the track isn't yours yet).
+      // A retro-♥ (entry set) fills nothing on the current card — it
+      // acted on a past track, the note is the feedback.
       if (res.ok && (data.status === 'saved' || data.status === 'noted')) {
-        const s = stations.find((x) => x.id === id);
-        const key = trackKey(s);
-        if (key) likedKeys.add(key);
-        showNote(id, data.status === 'noted' ? 'More like this ♥' : 'Saved to library ♥');
+        if (!entry) {
+          const s = stations.find((x) => x.id === id);
+          const key = trackKey(s);
+          if (key) likedKeys.add(key);
+        }
+        showNote(id, entry
+          ? 'Saved from history ♥'
+          : (data.status === 'noted' ? 'More like this ♥' : 'Saved to library ♥'));
       } else if (res.status === 409) {
         // Pre-affinity servers refuse owned tracks — keep their message
         // sensible until the Mini catches up.
@@ -368,8 +410,11 @@ async function shareTrack(id) {
   const t = (displayState.get(id) || {}).shownTrack || s.currentTrack;
   if (!t) return;
   const label = `${t.artist} — ${t.title}`;
-  const q = encodeURIComponent(label);
-  const text = `${label}\nhttps://bandcamp.com/search?q=${q}\nheard on https://${window.location.host}`;
+  // Prefer the real thing: the release/show page, then YouTube, then a
+  // search-link fallback for tracks the server has no provenance for.
+  const link = t.sourceURL || t.youtubeURL
+    || `https://bandcamp.com/search?q=${encodeURIComponent(label)}`;
+  const text = `${label}\n${link}\nheard on https://${window.location.host}`;
   try {
     if (navigator.share) {
       await navigator.share({ title: label, text });
