@@ -99,6 +99,8 @@ const ICON_THUMBSDOWN =
   '<svg class="icon icon--skip" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M16 3H7.5L5 11v2h6l-1 5.5 1.5 1.5 4.5-7V3zm0 0h3v10h-3"/></svg>';
 const ICON_NEXT =
   '<svg class="icon icon--next" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5v14l8-7zM16 5h2v14h-2z"/></svg>';
+const ICON_BOOST =
+  '<svg class="icon icon--boost" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 13l6-6 6 6M6 19l6-6 6 6"/></svg>';
 const ICON_SHARE =
   '<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>';
 
@@ -185,8 +187,12 @@ function render() {
     const disabled = actionBusy.has(s.id) || !shown.settled ? 'disabled' : '';
     const ownerActions = ownerKey()
       ? `<button type="button" class="act act--like${liked ? ' liked' : ''}"
-          aria-label="${liked ? 'Saved to library' : 'Save to library'}" ${disabled}>
+          aria-label="${liked ? 'Un-save (remove from library)' : 'Save to library'}" ${disabled}>
           ${liked ? ICON_HEART_FILLED : ICON_HEART}
+        </button>
+        <button type="button" class="act act--boost"
+          aria-label="More like this — steer the station" ${disabled}>
+          ${ICON_BOOST}
         </button>
         <button type="button" class="act act--skip"
           aria-label="Dislike and skip this track" ${disabled}>
@@ -271,16 +277,22 @@ $stations.addEventListener('click', (e) => {
   const act = e.target.closest('.act');
   if (act) {
     if (act.classList.contains('act--share')) {
-      shareTrack(card.dataset.id);
+      openTrack(card.dataset.id);
       return;
     }
     if (act.classList.contains('act--retro')) {
       sendAction(card.dataset.id, 'like', act.dataset.entry);
       return;
     }
-    const kind = act.classList.contains('act--like') ? 'like'
+    let kind = act.classList.contains('act--like') ? 'like'
+      : act.classList.contains('act--boost') ? 'boost'
       : act.classList.contains('act--next') ? 'next'
       : 'skip';
+    // The heart toggles: pressed while filled = undo the ♥.
+    if (kind === 'like') {
+      const s = stations.find((x) => x.id === card.dataset.id);
+      if (s && likedKeys.has(trackKey(s))) kind = 'unlike';
+    }
     sendAction(card.dataset.id, kind);
     return;
   }
@@ -368,6 +380,17 @@ async function sendAction(id, kind, entry) {
       } else {
         showNote(id, briefMessage(data.message, 'Couldn’t save'));
       }
+    } else if (kind === 'boost') {
+      showNote(id, res.ok ? 'Steering toward this ⤴' : briefMessage(data.message, 'Couldn’t boost'));
+    } else if (kind === 'unlike') {
+      if (res.ok) {
+        const s = stations.find((x) => x.id === id);
+        const key = trackKey(s);
+        if (key) likedKeys.delete(key);
+        showNote(id, 'Removed ♡');
+      } else {
+        showNote(id, briefMessage(data.message, 'Couldn’t undo'));
+      }
     } else if (!res.ok) {
       showNote(id, briefMessage(data.message, kind === 'next' ? 'Couldn’t advance' : 'Couldn’t skip'));
     }
@@ -400,29 +423,19 @@ function stop() {
   $audio.load();
 }
 
-// Share what's being HEARD (the display-lagged track), not the server's
-// current. Native share sheet where available, clipboard elsewhere.
-// Links are search URLs built from artist+title — always constructible;
-// real provenance links come when the server exposes them.
-async function shareTrack(id) {
+// Open what's being HEARD (the display-lagged track) in a new tab — the
+// real release/video page when the server knows it (listen there, share
+// from there), a Bandcamp search for the track when it doesn't. Must be
+// synchronous with the click or popup blockers eat the tab.
+function openTrack(id) {
   const s = stations.find((x) => x.id === id);
   if (!s) return;
   const t = (displayState.get(id) || {}).shownTrack || s.currentTrack;
   if (!t) return;
   const label = `${t.artist} — ${t.title}`;
-  // Prefer the real thing: the release/show page, then YouTube, then a
-  // search-link fallback for tracks the server has no provenance for.
   const link = t.sourceURL || t.youtubeURL
     || `https://bandcamp.com/search?q=${encodeURIComponent(label)}`;
-  const text = `${label}\n${link}\nheard on https://${window.location.host}`;
-  try {
-    if (navigator.share) {
-      await navigator.share({ title: label, text });
-    } else {
-      await navigator.clipboard.writeText(text);
-      showNote(id, 'Copied to clipboard');
-    }
-  } catch { /* user cancelled the sheet — not an error */ }
+  window.open(link, '_blank', 'noopener');
 }
 
 // Full set of events that change the "is it actually playing / is it
