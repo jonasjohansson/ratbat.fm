@@ -234,14 +234,17 @@ async function sendAction(id, kind) {
     });
     const data = await res.json().catch(() => ({}));
     if (kind === 'like') {
-      if (res.ok && data.status === 'saved') {
+      // 'saved' = downloaded into the library; 'noted' = already owned,
+      // affinity recorded ("♥ always means more like this" — the
+      // download is just a side effect when the track isn't yours yet).
+      if (res.ok && (data.status === 'saved' || data.status === 'noted')) {
         const s = stations.find((x) => x.id === id);
         const key = trackKey(s);
         if (key) likedKeys.add(key);
-        showNote(id, 'Saved to library ♥');
+        showNote(id, data.status === 'noted' ? 'More like this ♥' : 'Saved to library ♥');
       } else if (res.status === 409) {
-        // Playlist-backed stations play files you already own —
-        // nothing to save, and that's fine.
+        // Pre-affinity servers refuse owned tracks — keep their message
+        // sensible until the Mini catches up.
         showNote(id, 'Already in your library');
       } else {
         showNote(id, briefMessage(data.message, 'Couldn’t save'));
