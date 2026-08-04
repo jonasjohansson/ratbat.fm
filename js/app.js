@@ -122,6 +122,7 @@ function render() {
     // Real <button>s can't nest, so the card is a div[role=button] and
     // the action buttons stop the card's play/pause toggle themselves.
     const liked = likedKeys.has(trackKey(s));
+    const note = actionNotes.get(s.id);
     const actions = active && t
       ? `<span class="actions">
           <button type="button" class="act act--like${liked ? ' liked' : ''}"
@@ -134,6 +135,7 @@ function render() {
             ${actionBusy.has(s.id) ? 'disabled' : ''}>
             ${ICON_THUMBSDOWN}
           </button>
+          ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
         </span>`
       : '';
     return `
@@ -177,10 +179,22 @@ $stations.addEventListener('keydown', (e) => {
   toggle(card.dataset.id, card.dataset.url);
 });
 
+// Transient per-station status line ("Saved ♥", "Already in your
+// library", "Couldn't reach the broadcaster") — cleared after a beat.
+const actionNotes = new Map();
+function showNote(id, text) {
+  actionNotes.set(id, text);
+  render();
+  setTimeout(() => {
+    if (actionNotes.get(id) === text) { actionNotes.delete(id); render(); }
+  }, 3000);
+}
+
 // POST ♥ or 👎 for the station's current track. The body wants the
 // station's UUID (`id` from /now.json), not the slug. On a saved like,
 // remember the track key so the heart stays filled until the station
 // moves on; on a skip, poll sooner so the advance shows up fast.
+// Timeboxed: a hung request must un-busy the button, not dim it forever.
 async function sendAction(id, kind) {
   if (actionBusy.has(id)) return;
   actionBusy.add(id);
@@ -190,14 +204,28 @@ async function sendAction(id, kind) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ station: id }),
+      signal: AbortSignal.timeout(8000),
     });
     const data = await res.json().catch(() => ({}));
-    if (kind === 'like' && res.ok && data.status === 'saved') {
-      const s = stations.find((x) => x.id === id);
-      const key = trackKey(s);
-      if (key) likedKeys.add(key);
+    if (kind === 'like') {
+      if (res.ok && data.status === 'saved') {
+        const s = stations.find((x) => x.id === id);
+        const key = trackKey(s);
+        if (key) likedKeys.add(key);
+        showNote(id, 'Saved to library ♥');
+      } else if (res.status === 409) {
+        // Playlist-backed stations play files you already own —
+        // nothing to save, and that's fine.
+        showNote(id, 'Already in your library');
+      } else {
+        showNote(id, data.message || 'Couldn’t save');
+      }
+    } else if (!res.ok) {
+      showNote(id, data.message || 'Couldn’t skip');
     }
-  } catch { /* transient — the button simply un-busies */ }
+  } catch {
+    showNote(id, 'Couldn’t reach the broadcaster');
+  }
   actionBusy.delete(id);
   render();
   if (kind === 'skip') setTimeout(refresh, 1200);

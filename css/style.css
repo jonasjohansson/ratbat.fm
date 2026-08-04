@@ -222,6 +222,15 @@ main {
   color: var(--dot);
   opacity: 1;
 }
+.station .foot .note {
+  align-self: center;
+  color: var(--muted);
+  font-size: clamp(0.75rem, 1.8vmin, 0.95rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 
 /* force 1-col layout on narrow viewports regardless of station count */
 @media (max-width: 560px) {
