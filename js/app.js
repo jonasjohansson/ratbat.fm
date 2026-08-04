@@ -197,15 +197,18 @@ function render() {
           ${ICON_NEXT}
         </button>`
       : '';
-    const actions = active && t
+    // Share shows on every card with a track — guests can pass along
+    // what a channel is playing without tuning in. Owner controls stay
+    // on the active card: you only judge what you're hearing.
+    const actions = t
       ? `<span class="actions">
-          ${ownerActions}
+          ${active ? ownerActions : ''}
           <button type="button" class="act act--share" aria-label="Share this track">
             ${ICON_SHARE}
           </button>
           ${note
             ? `<span class="note" role="status">${escapeHtml(note)}</span>`
-            : (s.listeners > 1
+            : (active && s.listeners > 1
               ? `<span class="note" title="Skips and next affect every listener">${s.listeners} listening</span>`
               : '')}
         </span>`
