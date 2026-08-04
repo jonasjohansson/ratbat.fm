@@ -196,6 +196,10 @@ main {
   align-items: flex-end;
   gap: 0.25rem;
   margin-right: auto;
+  /* Without this the flex item refuses to shrink, the note's ellipsis
+     never engages, and a long note shoves the transport icons past the
+     card edge where overflow: hidden clips them away. */
+  min-width: 0;
 }
 .station .act {
   border: none;

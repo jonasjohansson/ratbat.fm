@@ -47,6 +47,8 @@ const ICON_HEART_FILLED =
   '<svg class="icon icon--heart-filled" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>';
 const ICON_THUMBSDOWN =
   '<svg class="icon icon--skip" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M16 3H7.5L5 11v2h6l-1 5.5 1.5 1.5 4.5-7V3zm0 0h3v10h-3"/></svg>';
+const ICON_NEXT =
+  '<svg class="icon icon--next" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5v14l8-7zM16 5h2v14h-2z"/></svg>';
 
 // Grid geometry — aims for the shape Jonas described:
 // 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
@@ -131,11 +133,20 @@ function render() {
             ${liked ? ICON_HEART_FILLED : ICON_HEART}
           </button>
           <button type="button" class="act act--skip"
-            aria-label="Skip this track"
+            aria-label="Dislike and skip this track"
             ${actionBusy.has(s.id) ? 'disabled' : ''}>
             ${ICON_THUMBSDOWN}
           </button>
-          ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
+          <button type="button" class="act act--next"
+            aria-label="Next track"
+            ${actionBusy.has(s.id) ? 'disabled' : ''}>
+            ${ICON_NEXT}
+          </button>
+          ${note
+            ? `<span class="note" role="status">${escapeHtml(note)}</span>`
+            : (s.listeners > 1
+              ? `<span class="note" title="Skips and next affect every listener">${s.listeners} listening</span>`
+              : '')}
         </span>`
       : '';
     return `
@@ -163,7 +174,10 @@ $stations.addEventListener('click', (e) => {
   if (!card) return;
   const act = e.target.closest('.act');
   if (act) {
-    sendAction(card.dataset.id, act.classList.contains('act--like') ? 'like' : 'skip');
+    const kind = act.classList.contains('act--like') ? 'like'
+      : act.classList.contains('act--next') ? 'next'
+      : 'skip';
+    sendAction(card.dataset.id, kind);
     return;
   }
   toggle(card.dataset.id, card.dataset.url);
@@ -190,11 +204,23 @@ function showNote(id, text) {
   }, 3000);
 }
 
-// POST ♥ or 👎 for the station's current track. The body wants the
-// station's UUID (`id` from /now.json), not the slug. On a saved like,
-// remember the track key so the heart stays filled until the station
-// moves on; on a skip, poll sooner so the advance shows up fast.
-// Timeboxed: a hung request must un-busy the button, not dim it forever.
+// Server error messages can be raw Swift error dumps (with local
+// filesystem paths) — keep notes short and screen-sized.
+const briefMessage = (m, fallback) =>
+  m && m.length <= 60 ? m : fallback;
+
+// AbortSignal.timeout is iOS 16.4+ — on older Safari it would throw
+// synchronously and break the action entirely. Degrade to no timeout.
+const timeoutSignal = (ms) =>
+  typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+    ? AbortSignal.timeout(ms)
+    : undefined;
+
+// POST ♥ / 👎 / ⏭ for the station's current track. The body wants the
+// station's UUID (`id` from /now.json), not the slug. ♥ saves and fills
+// until the track changes; 👎 dislikes AND advances (taste blacklist);
+// ⏭ advances with no judgement recorded. Timeboxed: a hung request must
+// un-busy the button, not dim it forever.
 async function sendAction(id, kind) {
   if (actionBusy.has(id)) return;
   actionBusy.add(id);
@@ -204,7 +230,7 @@ async function sendAction(id, kind) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ station: id }),
-      signal: AbortSignal.timeout(8000),
+      signal: timeoutSignal(8000),
     });
     const data = await res.json().catch(() => ({}));
     if (kind === 'like') {
@@ -218,17 +244,17 @@ async function sendAction(id, kind) {
         // nothing to save, and that's fine.
         showNote(id, 'Already in your library');
       } else {
-        showNote(id, data.message || 'Couldn’t save');
+        showNote(id, briefMessage(data.message, 'Couldn’t save'));
       }
     } else if (!res.ok) {
-      showNote(id, data.message || 'Couldn’t skip');
+      showNote(id, briefMessage(data.message, kind === 'next' ? 'Couldn’t advance' : 'Couldn’t skip'));
     }
   } catch {
     showNote(id, 'Couldn’t reach the broadcaster');
   }
   actionBusy.delete(id);
   render();
-  if (kind === 'skip') setTimeout(refresh, 1200);
+  if (kind === 'skip' || kind === 'next') setTimeout(refresh, 1200);
 }
 
 async function toggle(id, url) {
