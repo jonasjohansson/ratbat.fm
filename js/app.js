@@ -468,6 +468,65 @@ function schedulePoll() {
   }, delay);
 }
 
+// Persistent play history — the DB-backed log, not the 5-track ring on
+// the cards. Survives broadcaster restarts and reaches back as far as
+// the store does. Loaded on demand so the grid stays the fast path.
+let historyOpen = false;
+let historyRows = [];
+const $history = document.getElementById('history');
+
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API_BASE}/history?limit=100`, { cache: 'no-store' });
+    const data = await res.json();
+    historyRows = data.entries || [];
+  } catch {
+    historyRows = [];
+  }
+  renderHistory();
+}
+
+function renderHistory() {
+  if (!$history) return;
+  if (!historyOpen) {
+    $history.innerHTML = '<button type="button" id="histtoggle">Play history</button>';
+    $history.classList.remove('open');
+    return;
+  }
+  $history.classList.add('open');
+  const fmt = (ts) => {
+    const d = new Date(ts * 1000);
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    return sameDay
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+        d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+  const rows = historyRows.map((r) => `
+    <li>
+      <span class="htime">${escapeHtml(fmt(r.playedAt))}</span>
+      <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
+      ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
+      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
+      ${r.youtubeURL ? `<a class="tlink" href="${escapeHtml(r.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : ''}
+    </li>`).join('');
+  $history.innerHTML = `
+    <button type="button" id="histtoggle">Close history</button>
+    <ul class="hlist">${rows || '<li class="hempty">No history yet.</li>'}</ul>`;
+}
+
+if ($history) {
+  $history.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    if (!e.target.closest('#histtoggle')) return;
+    historyOpen = !historyOpen;
+    renderHistory();
+    if (historyOpen) loadHistory();
+  });
+  renderHistory();
+}
+
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refresh();
 });

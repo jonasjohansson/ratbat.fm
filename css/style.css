@@ -288,6 +288,60 @@ main {
   min-width: 0;
 }
 
+/* Play history — collapsed to a single button by default so the grid
+   stays the whole view; expands into a scrollable log. */
+#history {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 0.4rem calc(var(--gap) + 0.4rem) calc(0.4rem + env(safe-area-inset-bottom));
+  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
+  z-index: 10;
+}
+#history button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0;
+}
+#history button:hover { color: var(--fg); }
+#history.open { max-height: 60dvh; overflow-y: auto; }
+#history .hlist {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+}
+#history .hlist li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  min-width: 0;
+  line-height: 1.7;
+  color: var(--muted);
+}
+#history .htime {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+#history .htrack {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+#history .hsaved { color: var(--dot); flex-shrink: 0; }
+#history .hempty { font-style: italic; }
+
+/* keep the grid clear of the collapsed history bar */
+main { padding-bottom: calc(var(--gap) + 2.4rem + env(safe-area-inset-bottom)); }
+
 /* force 1-col layout on narrow viewports regardless of station count */
 @media (max-width: 560px) {
   main {
