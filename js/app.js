@@ -19,20 +19,26 @@ const API_BASE = resolveAPIBase();
 let stations = [];
 let activeId = null;
 
-// Owner key — actions (♥/👎/⏭) are owner-only server-side; guests get a
-// radio, not a mixer. Unlock once per device by visiting #key=<owner key>
-// (shown in the Mac app's Settings → Broadcast); stored in localStorage.
-// A 403 despite a stored key means the key rotated — drop it and hide
-// the buttons again.
-(() => {
-  const m = window.location.hash.match(/^#key=(.+)$/);
-  if (m) {
-    try { localStorage.setItem('ratbat_key', decodeURIComponent(m[1])); } catch {}
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-  }
-})();
+// Owner passcode — actions (♥/⤴/⏭) are owner-only server-side; guests get
+// a radio, not a mixer. Enter it once via the lock button (top right)
+// and localStorage holds it with no expiry: no re-prompt on reload, on a
+// new tab, or after the browser restarts. It survives until the passcode
+// changes on the broadcaster or the browser's site data is cleared.
+//
+// The unlock flow itself lives at the bottom of this file — it needs
+// `timeoutSignal`, which is a `const` declared further down.
+//
+// A 403 despite a stored passcode means it was changed on the broadcaster
+// — drop it and hide the buttons again.
+const KEY_STORE = 'ratbat_key';
 const ownerKey = () => {
-  try { return localStorage.getItem('ratbat_key') || null; } catch { return null; }
+  try { return localStorage.getItem(KEY_STORE) || null; } catch { return null; }
+};
+const storeOwnerKey = (key) => {
+  try {
+    if (key) localStorage.setItem(KEY_STORE, key);
+    else localStorage.removeItem(KEY_STORE);
+  } catch {}
 };
 
 // The now-playing DISPLAY lags the server on purpose: the server flips
@@ -81,6 +87,7 @@ const trackKey = (s) =>
 
 const $stations = document.getElementById('stations');
 const $audio = document.getElementById('audio');
+const $lock = document.getElementById('lock');
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
@@ -139,6 +146,10 @@ async function refresh() {
 }
 
 function render() {
+  // Keep the lock in step with the stored passcode from one place: a 403
+  // can drop the key mid-session, and the icon must not keep claiming
+  // owner mode after the buttons have gone.
+  syncLock();
   if (!stations.length) {
     $stations.style.setProperty('--cols', 1);
     $stations.style.setProperty('--rows', 1);
@@ -352,8 +363,8 @@ async function sendAction(id, kind, entry) {
     if (res.status === 403) {
       // Stored key no longer valid (rotated server-side) — drop it so
       // the buttons hide instead of failing forever.
-      try { localStorage.removeItem('ratbat_key'); } catch {}
-      showNote(id, 'Owner key expired — re-open with #key=…');
+      storeOwnerKey(null);
+      showNote(id, 'Passcode no longer valid — tap the lock to re-enter');
       actionBusy.delete(id);
       render();
       return;
@@ -530,5 +541,84 @@ if ($history) {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refresh();
 });
+
+// --- Owner login -----------------------------------------------------
+//
+// Ask the broadcaster whether a passcode is the owner's. `POST /auth`
+// answers 200 or 403 and changes nothing, so the prompt can report a
+// typo without ♥-ing a track to find out. Returns null when the question
+// couldn't be asked at all — "wrong" and "unreachable" deserve different
+// messages, and conflating them is how you end up retyping a passcode
+// that was right the whole time.
+async function checkOwnerKey(key) {
+  try {
+    const res = await fetch(`${API_BASE}/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: key }),
+      signal: timeoutSignal(8000),
+    });
+    return res.status === 200;
+  } catch {
+    return null;
+  }
+}
+
+function syncLock() {
+  if (!$lock) return;
+  const on = !!ownerKey();
+  $lock.textContent = on ? '🔓' : '🔒';
+  $lock.setAttribute('aria-label', on ? 'Owner mode on — tap to log out' : 'Owner login');
+  $lock.classList.toggle('on', on);
+}
+
+async function unlock() {
+  if (ownerKey()) {
+    if (confirm('Log out of owner mode on this device?')) {
+      storeOwnerKey(null);
+      syncLock();
+      render();
+    }
+    return;
+  }
+  const entered = prompt('Owner passcode');
+  if (entered === null) return;
+  const key = entered.trim();
+  if (!key) return;
+  const ok = await checkOwnerKey(key);
+  if (ok === null) {
+    alert('Couldn’t reach the broadcaster — try again in a moment.');
+    return;
+  }
+  if (!ok) {
+    alert('Wrong passcode.');
+    return;
+  }
+  storeOwnerKey(key);
+  syncLock();
+  render();
+}
+
+if ($lock) {
+  $lock.addEventListener('click', unlock);
+  syncLock();
+}
+
+// Legacy unlock link: /#key=<passcode>. Kept working because old
+// bookmarks exist, but validated now rather than trusted — storing an
+// unverified key used to mean the buttons appeared and then failed.
+// The hash is stripped either way so the passcode doesn't linger in the
+// address bar or get shared by copy-pasting the URL.
+(async () => {
+  const m = window.location.hash.match(/^#key=(.+)$/);
+  if (!m) return;
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  const key = decodeURIComponent(m[1]).trim();
+  if (await checkOwnerKey(key)) {
+    storeOwnerKey(key);
+    syncLock();
+    render();
+  }
+})();
 
 refresh().then(schedulePoll);

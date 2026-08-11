@@ -353,3 +353,25 @@ main { padding-bottom: calc(var(--gap) + 2.4rem + env(safe-area-inset-bottom)); 
   }
   html, body { overflow: auto; height: auto; }
 }
+
+/* owner login — deliberately quiet. Guests should read it as furniture,
+   not as a door they're being turned away from. */
+#lock {
+  position: fixed;
+  top: calc(0.5rem + env(safe-area-inset-top));
+  right: calc(0.5rem + env(safe-area-inset-right));
+  z-index: 10;
+  border: 0;
+  border-radius: 50%;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+#lock:hover, #lock:focus-visible { opacity: 1; }
+#lock.on { opacity: 0.75; }
