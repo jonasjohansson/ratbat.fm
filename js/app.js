@@ -47,16 +47,26 @@ const storeOwnerKey = (key) => {
 // audio has plausibly caught up. While display and server disagree, the
 // action buttons pause — a ♥ would target the server's track, not the
 // one being heard.
+// 10s is the buffer-lag ceiling, but a track shorter than ~30s must not
+// be held longer than a third of its runtime or the display never
+// catches up (station IDs, interstitials).
 const DISPLAY_DELAY_MS = 10_000;
-const displayState = new Map(); // id -> {shownKey, shownTrack, pendingKey, pendingTrack, pendingAt}
+const displayDelayFor = (t) =>
+  t && t.durationSeconds
+    ? Math.max(2_000, Math.min(DISPLAY_DELAY_MS, t.durationSeconds * 1000 / 3))
+    : DISPLAY_DELAY_MS;
+const displayState = new Map(); // id -> {shownKey, shownTrack, shownAt, pendingKey, pendingTrack, pendingAt}
 
 function displayTrack(s) {
   const st = displayState.get(s.id) || {};
   const incoming = trackKey(s);
   if (!st.shownKey || activeId !== s.id) {
     // Nothing shown yet (or nobody's listening to this card) — no lag to
-    // honor, adopt immediately.
-    displayState.set(s.id, { shownKey: incoming, shownTrack: s.currentTrack });
+    // honor, adopt immediately. `shownAt` is stamped only on a real track
+    // change so the elapsed clock keeps counting across renders.
+    if (st.shownKey !== incoming) {
+      displayState.set(s.id, { shownKey: incoming, shownTrack: s.currentTrack, shownAt: performance.now() });
+    }
     return { track: s.currentTrack, settled: true };
   }
   if (incoming === st.shownKey) {
@@ -67,13 +77,55 @@ function displayTrack(s) {
     st.pendingKey = incoming;
     st.pendingTrack = s.currentTrack;
     st.pendingAt = performance.now();
+    // Under SSE there may be no poll-driven render before the lag window
+    // closes — schedule the settling render explicitly. (Also settles the
+    // display exactly instead of at the next poll.)
+    setTimeout(render, displayDelayFor(s.currentTrack) + 100);
   }
-  if (performance.now() - st.pendingAt >= DISPLAY_DELAY_MS) {
-    displayState.set(s.id, { shownKey: incoming, shownTrack: s.currentTrack });
+  if (performance.now() - st.pendingAt >= displayDelayFor(st.pendingTrack)) {
+    displayState.set(s.id, { shownKey: incoming, shownTrack: s.currentTrack, shownAt: performance.now() });
     return { track: s.currentTrack, settled: true };
   }
   return { track: st.shownTrack, settled: false };
 }
+
+// mm:ss for elapsed/duration — progress is textual on purpose, no bars.
+function fmtClock(secs) {
+  const s = Math.max(0, Math.floor(secs));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// Timestamps for history rows and the on-card timeline: time-of-day for
+// today, date + time for anything older.
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Elapsed is a client-side estimate counted from the moment this card's
+// display adopted the track — which itself lags the server by the buffer
+// delay, so the clock roughly tracks what's being heard. Null duration
+// (unknown length) shows elapsed alone.
+function progressText(id) {
+  const st = displayState.get(id);
+  if (!st || st.shownAt == null || !st.shownTrack) return '';
+  const d = st.shownTrack.durationSeconds;
+  const elapsed = (performance.now() - st.shownAt) / 1000;
+  return d ? `${fmtClock(Math.min(elapsed, d))} / ${fmtClock(d)}` : fmtClock(elapsed);
+}
+
+// The 1s tick patches only the progress spans' text — never structure —
+// so it coexists with the destructive re-render instead of fighting it
+// (render always re-emits the same freshly computed string).
+setInterval(() => {
+  document.querySelectorAll('.progress').forEach((el) => {
+    el.textContent = progressText(el.dataset.station);
+  });
+}, 1000);
 
 // ♥ state is keyed on station + track so the filled heart resets itself
 // when the station moves on. Session-scoped on purpose: the server is the
@@ -125,25 +177,36 @@ function gridDims(n) {
   return [cols, rows];
 }
 
+// One ingestion path: SSE frames and poll responses both land here, so
+// rendering can't diverge between transports.
+function adoptNow(data) {
+  stations = (data.stations || []).map((s) => {
+    if (s.streamURL && s.streamURL.startsWith('/')) s.streamURL = API_BASE + s.streamURL;
+    return s;
+  });
+  // If the active station went offline, stop.
+  if (activeId && !stations.some((s) => s.id === activeId)) stop();
+  render();
+  syncTitle();
+}
+
 async function refresh() {
   try {
     const res = await fetch(`${API_BASE}/now.json`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    stations = (data.stations || []).map((s) => {
-      if (s.streamURL && s.streamURL.startsWith('/')) s.streamURL = API_BASE + s.streamURL;
-      return s;
-    });
-    // If the active station went offline, stop.
-    if (activeId && !stations.some((s) => s.id === activeId)) stop();
-    render();
-    syncTitle();
+    adoptNow(await res.json());
+    pollFailures = 0;
   } catch {
+    // Count the failure so schedulePoll backs off — the old fixed 1.5s
+    // cadence hammered an unreachable broadcaster forever.
+    pollFailures = Math.min(pollFailures + 1, 8);
     stations = [];
     stop();
     $stations.innerHTML = '<p class="empty">Broadcaster offline.</p>';
   }
 }
+
+const ORIGIN_LABELS = { nts: 'NTS', lastFM: 'Last.fm', bandcamp: 'Bandcamp', library: 'Library' };
 
 function render() {
   // Keep the lock in step with the stored passcode from one place: a 403
@@ -174,10 +237,16 @@ function render() {
     const isLoading = active && loading;
     const shown = displayTrack(s);
     const t = shown.track;
+    // Meta stays text-only by design — `artworkURL` is deliberately
+    // ignored. Album and progress are quiet second-order lines; the
+    // progress span's text is re-patched every second by the tick above.
+    const progress = active && t ? progressText(s.id) : '';
     const now = isLoading
       ? `<span class="status">Connecting…</span>`
       : t
         ? `<b class="title">${escapeHtml(t.title)}</b><span class="artist">${escapeHtml(t.artist)}</span>`
+          + (t.album ? `<span class="album">${escapeHtml(t.album)}</span>` : '')
+          + (progress ? `<span class="progress" data-station="${escapeHtml(s.id)}">${progress}</span>` : '')
         : `<span class="status">Live</span>`;
     const classes = [
       'station',
@@ -244,6 +313,7 @@ function render() {
       .slice(0, 4)
       .map((r) => `
         <li>
+          ${r.playedAt ? `<span class="ttime">${escapeHtml(fmtTime(r.playedAt))}</span>` : ''}
           ${ownerKey()
             ? `<button type="button" class="act act--retro" data-entry="${escapeHtml(r.entryID)}" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
             : ''}
@@ -256,8 +326,14 @@ function render() {
           ${recentRows ? `<ul class="trecent">${recentRows}</ul>` : ''}
         </div>`
       : '';
-    const nowLinks = active && t && (t.sourceURL || t.youtubeURL)
-      ? `<span class="nowlinks">${links(t)}</span>`
+    // Origin badge: which source fed the station this track. Wire values
+    // are Swift coding keys — map them to display names, pass unknown
+    // ones through so new origins degrade to their raw name.
+    const origin = t && t.origin
+      ? `<span class="origin">${escapeHtml(ORIGIN_LABELS[t.origin] || t.origin)}</span>`
+      : '';
+    const nowLinks = active && t && (origin || t.sourceURL || t.youtubeURL)
+      ? `<span class="nowlinks">${origin}${links(t)}</span>`
       : '';
     return `
       <div role="button" tabindex="0"
@@ -343,6 +419,50 @@ const timeoutSignal = (ms) =>
     ? AbortSignal.timeout(ms)
     : undefined;
 
+// Every JSON POST goes through here: one place for the timeout, the
+// JSON dance, and the 403 handling — a stored key that stops working
+// (rotated on the broadcaster) is dropped centrally so owner UI hides
+// everywhere instead of failing forever. Throws on network error /
+// timeout so callers can tell "broadcaster said no" from "couldn't ask".
+async function apiPost(path, body, ms = 8000) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: timeoutSignal(ms),
+  });
+  const data = await res.json().catch(() => ({}));
+  // Only drop the session when the refused request actually carried the
+  // stored key — checkOwnerKey also probes *candidate* passcodes (login
+  // prompt, legacy #key= links), and a wrong guess there must not log
+  // out the session that was fine the whole time.
+  if (res.status === 403 && body && body.token && body.token === ownerKey()) {
+    storeOwnerKey(null);
+    syncLock();
+    render();
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Short, human translations for statuses whose meaning is fixed here.
+// Anything unmapped falls back to the server's message when it's
+// screen-sized (sendAction keeps its own per-action wording; this map
+// is the shared surface for panels.js in a later milestone).
+const FRIENDLY_STATUS = {
+  401: 'Passcode no longer valid',
+  403: 'Passcode no longer valid',
+  404: 'Not available on this broadcaster',
+  409: 'That name is taken',
+  410: 'Station no longer exists',
+  422: 'Check the form',
+  503: 'Broadcaster hiccup — try again',
+};
+function friendlyError(status, data) {
+  if (FRIENDLY_STATUS[status]) return FRIENDLY_STATUS[status];
+  if (status >= 500) return 'Broadcaster hiccup — try again';
+  return briefMessage(data && data.message, 'Broadcaster hiccup — try again');
+}
+
 // POST ♥ / 👎 / ⏭ for the station's current track. The body wants the
 // station's UUID (`id` from /now.json), not the slug. ♥ saves and fills
 // until the track changes; 👎 dislikes AND advances (taste blacklist);
@@ -353,17 +473,12 @@ async function sendAction(id, kind, entry) {
   actionBusy.add(id);
   render();
   try {
-    const res = await fetch(`${API_BASE}/${kind}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ station: id, token: ownerKey(), entry: entry || undefined }),
-      signal: timeoutSignal(8000),
+    const { ok, status, data } = await apiPost(`/${kind}`, {
+      station: id, token: ownerKey(), entry: entry || undefined,
     });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 403) {
-      // Stored key no longer valid (rotated server-side) — drop it so
-      // the buttons hide instead of failing forever.
-      storeOwnerKey(null);
+    if (status === 403) {
+      // apiPost already dropped the rotated key — the per-card note is
+      // the only thing left to do.
       showNote(id, 'Passcode no longer valid — tap the lock to re-enter');
       actionBusy.delete(id);
       render();
@@ -375,7 +490,7 @@ async function sendAction(id, kind, entry) {
       // download is just a side effect when the track isn't yours yet).
       // A retro-♥ (entry set) fills nothing on the current card — it
       // acted on a past track, the note is the feedback.
-      if (res.ok && (data.status === 'saved' || data.status === 'noted')) {
+      if (ok && (data.status === 'saved' || data.status === 'noted')) {
         if (!entry) {
           const s = stations.find((x) => x.id === id);
           const key = trackKey(s);
@@ -384,7 +499,7 @@ async function sendAction(id, kind, entry) {
         showNote(id, entry
           ? 'Saved from history ♥'
           : (data.status === 'noted' ? 'More like this ♥' : 'Saved to library ♥'));
-      } else if (res.status === 409) {
+      } else if (status === 409) {
         // Pre-affinity servers refuse owned tracks — keep their message
         // sensible until the Mini catches up.
         showNote(id, 'Already in your library');
@@ -392,9 +507,9 @@ async function sendAction(id, kind, entry) {
         showNote(id, briefMessage(data.message, 'Couldn’t save'));
       }
     } else if (kind === 'boost') {
-      showNote(id, res.ok ? 'Steering toward this ⤴' : briefMessage(data.message, 'Couldn’t boost'));
+      showNote(id, ok ? 'Steering toward this ⤴' : briefMessage(data.message, 'Couldn’t boost'));
     } else if (kind === 'unlike') {
-      if (res.ok) {
+      if (ok) {
         const s = stations.find((x) => x.id === id);
         const key = trackKey(s);
         if (key) likedKeys.delete(key);
@@ -402,7 +517,7 @@ async function sendAction(id, kind, entry) {
       } else {
         showNote(id, briefMessage(data.message, 'Couldn’t undo'));
       }
-    } else if (!res.ok) {
+    } else if (!ok) {
       showNote(id, briefMessage(data.message, kind === 'next' ? 'Couldn’t advance' : 'Couldn’t skip'));
     }
   } catch {
@@ -464,20 +579,111 @@ function syncTitle() {
   document.title = t ? `${t.artist} — ${t.title} · Ratbat` : `${s.name} · Ratbat`;
 }
 
+// --- Transport -------------------------------------------------------
+//
+// SSE is the live path: the broadcaster pushes a full now.json snapshot
+// over `/events` on every change. Polling stays as the fallback — for
+// browsers without EventSource, and for whenever the stream is down.
+
 // Poll faster when nothing is live so new broadcasts appear quickly;
 // back off once stations are up (keeps now-playing fresh without hammering).
 const POLL_FAST = 1500;
 const POLL_SLOW = 3000;
 let pollTimer = null;
+let pollFailures = 0;
 
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer);
-  const delay = stations.length ? POLL_SLOW : POLL_FAST;
+  // SSE owns freshness while it's healthy — the poll loop stands down
+  // and connectEvents() restarts it if the stream drops.
+  if (sseAlive) { pollTimer = null; return; }
+  // Consecutive failures back the cadence off exponentially (cap 30s).
+  const delay = pollFailures
+    ? Math.min(POLL_FAST * 2 ** pollFailures, 30_000)
+    : (stations.length ? POLL_SLOW : POLL_FAST);
   pollTimer = setTimeout(async () => {
     await refresh();
     schedulePoll();
   }, delay);
 }
+
+let es = null;
+let sseAlive = false;
+let sseRetries = 0;
+let sseRetryTimer = null;
+let lastEventAt = 0;
+
+function connectEvents() {
+  // No EventSource (museum-piece browsers) — polling continues, status quo.
+  if (!window.EventSource) return;
+  if (es) es.close();
+  const src = new EventSource(`${API_BASE}/events`);
+  es = src;
+  const adopt = (e) => {
+    lastEventAt = performance.now();
+    try { adoptNow(JSON.parse(e.data)); } catch { /* malformed frame — a poll will correct */ }
+  };
+  // Today's server sends unnamed `data:` frames (→ onmessage); the next
+  // one names its events. Listen on both paths so this client works
+  // against either server without a flag day.
+  src.onmessage = adopt;
+  src.addEventListener('now', adopt);
+  // `stations` is a change *notification*, not data. /events is public
+  // (Allow-Origin: *), so owner data must NEVER ride SSE — on a nudge we
+  // re-fetch the public snapshot, and owner surfaces (later milestone)
+  // re-fetch their token-gated routes themselves.
+  src.addEventListener('stations', () => {
+    lastEventAt = performance.now();
+    refresh();
+  });
+  // Named heartbeat from the next server — makes the staleness watchdog
+  // below exact instead of best-effort.
+  src.addEventListener('ping', () => { lastEventAt = performance.now(); });
+  src.onopen = () => {
+    if (es !== src) return;
+    sseAlive = true;
+    sseRetries = 0;
+    // The stream connecting proves the broadcaster is reachable — if it
+    // drops again, polling must resume at its normal cadence, not a
+    // failure backoff left over from before the outage ended.
+    pollFailures = 0;
+    lastEventAt = performance.now();
+    // SSE has freshness now — stop the poll loop.
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  };
+  src.onerror = () => {
+    // A stale instance erroring after being replaced must not touch the
+    // live one's state.
+    if (es !== src) { src.close(); return; }
+    // EventSource would retry on its own, but with no backoff and no
+    // signal to us — close it and own the schedule: exponential with
+    // jitter, polling resumes to cover the gap.
+    src.close();
+    sseAlive = false;
+    const delay = Math.min(1000 * 2 ** sseRetries, 30_000);
+    sseRetries = Math.min(sseRetries + 1, 8);
+    clearTimeout(sseRetryTimer);
+    sseRetryTimer = setTimeout(connectEvents, delay + delay * 0.2 * Math.random());
+    // Every failed reconnect lands here — rescheduling unconditionally
+    // would keep resetting the pending poll timer and let a fast retry
+    // cadence starve the very fallback meant to cover the gap.
+    if (!pollTimer) schedulePoll();
+  };
+}
+
+// Staleness watchdog. Today's server heartbeat is an SSE *comment*
+// (`: heartbeat`), invisible to EventSource — a silently dead connection
+// looks identical to a quiet one. Best effort until the named `ping`
+// ships: if nothing arrived for 90s while the tab is visible, assume the
+// worst and reconnect.
+setInterval(() => {
+  if (document.visibilityState !== 'visible' || !sseAlive) return;
+  if (performance.now() - lastEventAt > 90_000) {
+    es.close();
+    sseAlive = false;
+    connectEvents();
+  }
+}, 90_000);
 
 // Persistent play history — the DB-backed log, not the 5-track ring on
 // the cards. Survives broadcaster restarts and reaches back as far as
@@ -505,18 +711,9 @@ function renderHistory() {
     return;
   }
   $history.classList.add('open');
-  const fmt = (ts) => {
-    const d = new Date(ts * 1000);
-    const today = new Date();
-    const sameDay = d.toDateString() === today.toDateString();
-    return sameDay
-      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
-        d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
   const rows = historyRows.map((r) => `
     <li>
-      <span class="htime">${escapeHtml(fmt(r.playedAt))}</span>
+      <span class="htime">${escapeHtml(fmtTime(r.playedAt))}</span>
       <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
       ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
       ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
@@ -539,7 +736,18 @@ if ($history) {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) refresh();
+  if (document.hidden) return;
+  refresh();
+  // Tabs coming back from the background often return with a dead
+  // EventSource — reconnect now rather than waiting out the backoff.
+  if (window.EventSource && !sseAlive) {
+    clearTimeout(sseRetryTimer);
+    sseRetries = 0;
+    connectEvents();
+  }
+  // A boot-time key check that couldn't reach the broadcaster gets
+  // another chance whenever the tab is looked at again.
+  if (keyCheckPending) validateStoredKey();
 });
 
 // --- Owner login -----------------------------------------------------
@@ -552,15 +760,31 @@ document.addEventListener('visibilitychange', () => {
 // that was right the whole time.
 async function checkOwnerKey(key) {
   try {
-    const res = await fetch(`${API_BASE}/auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: key }),
-      signal: timeoutSignal(8000),
-    });
-    return res.status === 200;
+    const { status } = await apiPost('/auth', { token: key });
+    return status === 200;
   } catch {
     return null;
+  }
+}
+
+// Boot-time validation of the stored passcode. The lock used to claim
+// 🔓 until the first failing action; ask /auth up front instead so the
+// owner signal is trustworthy before any owner UI shows. Silent when
+// the key is fine. Wrong ≠ unreachable: a 403 clears the key, a network
+// failure keeps it and retries on the next visibilitychange.
+let keyCheckPending = false;
+async function validateStoredKey() {
+  keyCheckPending = false;
+  if (!ownerKey()) return;
+  const ok = await checkOwnerKey(ownerKey());
+  if (ok === false) {
+    // checkOwnerKey's 403 already dropped the key via apiPost — surface
+    // why the buttons vanished, once, on the card being listened to.
+    syncLock();
+    render();
+    if (activeId) showNote(activeId, 'Passcode no longer valid — tap the lock');
+  } else if (ok === null) {
+    keyCheckPending = true;
   }
 }
 
@@ -621,4 +845,8 @@ if ($lock) {
   }
 })();
 
-refresh().then(schedulePoll);
+refresh().then(() => {
+  connectEvents();
+  schedulePoll();
+});
+validateStoredKey();
