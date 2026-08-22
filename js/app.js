@@ -335,6 +335,12 @@ function render() {
     const nowLinks = active && t && (origin || t.sourceURL || t.youtubeURL)
       ? `<span class="nowlinks">${origin}${links(t)}</span>`
       : '';
+    // ✎ opens the station editor — never inline UI on the card. The
+    // grid stays a radio; management lives in the panel, and the button
+    // only exists once the server advertises the CRUD capability.
+    const editBtn = ownerKey() && capabilities.includes('stations')
+      ? `<button type="button" class="act act--edit" aria-label="Edit ${escapeHtml(s.name)}">✎</button>`
+      : '';
     return `
       <div role="button" tabindex="0"
         class="${classes}"
@@ -345,6 +351,7 @@ function render() {
         <div class="head">
           <span class="dot" aria-hidden="true"></span>
           <span class="name">${escapeHtml(s.name)}</span>
+          ${editBtn}
         </div>
         <div class="now">${now}${nowLinks}</div>
         ${timeline}
@@ -365,6 +372,11 @@ $stations.addEventListener('click', (e) => {
   if (act) {
     if (act.classList.contains('act--share')) {
       openTrack(card.dataset.id);
+      return;
+    }
+    if (act.classList.contains('act--edit')) {
+      // Defined in panels.js — guarded because that file loads second.
+      if (typeof openStationEditorById === 'function') openStationEditorById(card.dataset.id);
       return;
     }
     if (act.classList.contains('act--retro')) {
@@ -609,6 +621,7 @@ function schedulePoll() {
 
 let es = null;
 let sseAlive = false;
+let sseEverOpened = false;
 let sseRetries = 0;
 let sseRetryTimer = null;
 let lastEventAt = 0;
@@ -635,6 +648,9 @@ function connectEvents() {
   src.addEventListener('stations', () => {
     lastEventAt = performance.now();
     refresh();
+    // Owner surfaces re-fetch their token-gated routes on the same
+    // nudge — the hook lives in panels.js and is guarded (load order).
+    if (typeof onStationsChanged === 'function') onStationsChanged();
   });
   // Named heartbeat from the next server — makes the staleness watchdog
   // below exact instead of best-effort.
@@ -643,6 +659,12 @@ function connectEvents() {
     if (es !== src) return;
     sseAlive = true;
     sseRetries = 0;
+    // A reconnect often follows a broadcaster redeploy — re-read
+    // /health so a capability change (upgrade or rollback) is noticed
+    // without a page reload. The first open skips it: boot already
+    // probed.
+    if (sseEverOpened) probeHealth();
+    sseEverOpened = true;
     // The stream connecting proves the broadcaster is reachable — if it
     // drops again, polling must resume at its normal cadence, not a
     // failure backoff left over from before the outage ended.
@@ -685,55 +707,40 @@ setInterval(() => {
   }
 }, 90_000);
 
-// Persistent play history — the DB-backed log, not the 5-track ring on
-// the cards. Survives broadcaster restarts and reaches back as far as
-// the store does. Loaded on demand so the grid stays the fast path.
-let historyOpen = false;
-let historyRows = [];
-const $history = document.getElementById('history');
+// --- Capabilities -----------------------------------------------------
+//
+// /health is the capability anchor (settled decision): the server lists
+// what it can do and the client believes it. Old servers 404 the route
+// — empty capabilities, so no owner panels and no health strip; the
+// deployed site must look exactly like today against them. Memory-only
+// on purpose: the Mini can be redeployed any time, so nothing here is
+// cached across page loads.
+let serverHealth = null; // last /health payload; null = old server / unreachable
+let capabilities = [];   // serverHealth.capabilities, [] when absent
 
-async function loadHistory() {
+async function probeHealth() {
   try {
-    const res = await fetch(`${API_BASE}/history?limit=100`, { cache: 'no-store' });
+    const res = await fetch(`${API_BASE}/health`, {
+      cache: 'no-store', signal: timeoutSignal(8000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    historyRows = data.entries || [];
+    serverHealth = data;
+    capabilities = Array.isArray(data.capabilities) ? data.capabilities : [];
   } catch {
-    historyRows = [];
+    serverHealth = null;
+    capabilities = [];
   }
-  renderHistory();
+  // panels.js redraws the bar and strip — guarded, load-order note there.
+  if (typeof onHealthChange === 'function') onHealthChange();
 }
 
-function renderHistory() {
-  if (!$history) return;
-  if (!historyOpen) {
-    $history.innerHTML = '<button type="button" id="histtoggle">Play history</button>';
-    $history.classList.remove('open');
-    return;
-  }
-  $history.classList.add('open');
-  const rows = historyRows.map((r) => `
-    <li>
-      <span class="htime">${escapeHtml(fmtTime(r.playedAt))}</span>
-      <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
-      ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
-      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
-      ${r.youtubeURL ? `<a class="tlink" href="${escapeHtml(r.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : ''}
-    </li>`).join('');
-  $history.innerHTML = `
-    <button type="button" id="histtoggle">Close history</button>
-    <ul class="hlist">${rows || '<li class="hempty">No history yet.</li>'}</ul>`;
-}
-
-if ($history) {
-  $history.addEventListener('click', (e) => {
-    if (e.target.closest('a')) return;
-    if (!e.target.closest('#histtoggle')) return;
-    historyOpen = !historyOpen;
-    renderHistory();
-    if (historyOpen) loadHistory();
-  });
-  renderHistory();
-}
+// The strip shows uptime — keep it honest while the tab is watched.
+// Only re-probes where a probe has succeeded before; a server gaining
+// /health is discovered by the SSE-reconnect probe instead.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && serverHealth) probeHealth();
+}, 60_000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
@@ -788,12 +795,23 @@ async function validateStoredKey() {
   }
 }
 
+let lastOwnerState = null;
 function syncLock() {
-  if (!$lock) return;
   const on = !!ownerKey();
-  $lock.textContent = on ? '🔓' : '🔒';
-  $lock.setAttribute('aria-label', on ? 'Owner mode on — tap to log out' : 'Owner login');
-  $lock.classList.toggle('on', on);
+  if ($lock) {
+    $lock.textContent = on ? '🔓' : '🔒';
+    $lock.setAttribute('aria-label', on ? 'Owner mode on — tap to log out' : 'Owner login');
+    $lock.classList.toggle('on', on);
+  }
+  // Panels gate owner-only UI on the same signal — poke panels.js when
+  // it flips (login, logout, rotation). Guarded with typeof: render()
+  // can run before panels.js has evaluated (see the load-order note
+  // there), and only on a real flip so the every-render syncLock call
+  // doesn't rebuild the panel bar constantly.
+  if (on !== lastOwnerState) {
+    lastOwnerState = on;
+    if (typeof onOwnerChange === 'function') onOwnerChange();
+  }
 }
 
 async function unlock() {
@@ -850,3 +868,4 @@ refresh().then(() => {
   schedulePoll();
 });
 validateStoredKey();
+probeHealth();

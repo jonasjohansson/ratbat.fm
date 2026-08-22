@@ -12,6 +12,16 @@
   --line: 1.35;
 
   --gap: 2px;
+
+  /* Panels & forms. --fs-small tokenizes the clamp repeated all over the
+     sheet; --chrome-h is the panel bar's height budget (was a magic
+     2.4rem in main's padding); --radius stays near-square on purpose —
+     hairline aesthetic, not a rounded admin console. */
+  --fs-small: clamp(0.75rem, 1.9vmin, 0.95rem);
+  --radius: 2px;
+  --space: 0.6rem;
+  --danger: #c22;
+  --chrome-h: 2.4rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +34,7 @@
     --hover: #141414;
     --active: #1a1605;
     --dot: #f55;
+    --danger: #f66;
   }
 }
 
@@ -313,20 +324,39 @@ main {
   min-width: 0;
 }
 
-/* Play history — collapsed to a single button by default so the grid
-   stays the whole view; expands into a scrollable log. */
-#history {
+/* Panel bar + panel sheet — the generalized descendants of the old
+   #history bar: fixed chrome along the bottom, hairline top border, one
+   panel open at a time above the bar. Panels are siblings of the grid
+   on purpose — render() re-renders #stations destructively and must
+   never touch form state. */
+#panelbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space);
   background: var(--bg);
   border-top: 1px solid var(--border);
   padding: 0.4rem calc(var(--gap) + 0.4rem) calc(0.4rem + env(safe-area-inset-bottom));
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
+  font-size: var(--fs-small);
   z-index: 10;
 }
-#history button {
+#panelbar .health {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+#panelbar .pbtns {
+  margin-left: auto;
+  display: flex;
+  gap: calc(var(--space) * 1.5);
+  flex-shrink: 0;
+}
+#panelbar .pbtn {
   background: none;
   border: none;
   color: var(--muted);
@@ -334,14 +364,181 @@ main {
   cursor: pointer;
   padding: 0.2rem 0;
 }
-#history button:hover { color: var(--fg); }
-#history.open { max-height: 60dvh; overflow-y: auto; }
-#history .hlist {
+#panelbar .pbtn:hover,
+#panelbar .pbtn.on { color: var(--fg); }
+#panelbar .pbtn:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+
+#panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--chrome-h) + env(safe-area-inset-bottom));
+  max-height: 60dvh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: var(--space) calc(var(--gap) + 0.4rem);
+  font-size: var(--fs-small);
+  z-index: 10;
+}
+#panel[hidden] { display: none; }
+#panel .phead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space);
+}
+#panel .phead h2 {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 700;
+}
+#panel .p-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.2em;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+#panel .p-close:hover { color: var(--fg); }
+
+/* Form primitives — quiet, hairline, token-driven so dark mode is free. */
+#panel .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: var(--space);
+  max-width: 28rem;
+}
+#panel .field > label { color: var(--muted); }
+#panel input[type="text"],
+#panel input[type="number"],
+#panel select,
+dialog input[type="text"] {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.5rem;
+  min-width: 0;
+}
+#panel input[type="number"] { width: 6rem; }
+#panel input:focus-visible,
+#panel select:focus-visible,
+dialog input:focus-visible,
+.chip:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.chip {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--border-strong); }
+.chip.on {
+  background: var(--active);
+  border-color: var(--border-strong);
+}
+.btn {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--border-strong); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn--primary { border-color: var(--border-strong); font-weight: 600; }
+.btn--danger { color: var(--danger); border-color: var(--danger); }
+.frow {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+.ferror { color: var(--danger); margin: var(--space) 0; }
+.fhint, .pnote { color: var(--muted); margin: 0.3rem 0; }
+#panel .fkind {
+  color: var(--muted);
+  font-variant-caps: small-caps;
+  margin: 0 0 var(--space);
+}
+
+/* Station rows in the panel. */
+#panel .plist {
   list-style: none;
-  margin: 0.4rem 0 0;
+  margin: var(--space) 0 0;
   padding: 0;
 }
-#history .hlist li {
+#panel .plist .row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+#panel .dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--dot);
+  flex-shrink: 0;
+}
+#panel .dot.off { background: var(--muted); opacity: 0.4; }
+#panel .rname {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+#panel .badge {
+  border: 1px solid var(--border);
+  padding: 0 0.45em;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+#panel .rmeta { color: var(--muted); flex-shrink: 0; }
+#panel .rspacer { flex: 1; }
+#panel .rauto { color: var(--muted); flex-shrink: 0; }
+
+/* History rows — same look they had in the old #history aside. */
+#panel .hfilters { margin-bottom: var(--space); }
+#panel .hlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#panel .hlist li {
   display: flex;
   align-items: baseline;
   gap: 0.6em;
@@ -349,23 +546,54 @@ main {
   line-height: 1.7;
   color: var(--muted);
 }
-#history .htime {
+#panel .htime {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
 }
-#history .htrack {
+#panel .htrack {
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-#history .hsaved { color: var(--dot); flex-shrink: 0; }
-#history .hempty { font-style: italic; }
+#panel .hsaved { color: var(--dot); flex-shrink: 0; }
+#panel .hempty { font-style: italic; }
+#panel .h-more { margin-top: var(--space); }
+#panel .tlink {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  flex-shrink: 0;
+}
+#panel .tlink:hover { color: var(--fg); }
 
-/* keep the grid clear of the collapsed history bar */
-main { padding-bottom: calc(var(--gap) + 2.4rem + env(safe-area-inset-bottom)); }
+/* Delete confirm — the one destructive dialog. Backdrop scrim matches
+   the #lock color-mix idiom. */
+dialog {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 1rem;
+  max-width: min(22rem, 90vw);
+  font-size: var(--fs-small);
+}
+dialog h2 { margin: 0 0 var(--space); font-size: 1.05em; }
+dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+/* Grid chrome: the quiet per-card ✎ (owner + capability gated). */
+.station .act--edit {
+  font-size: clamp(0.9rem, 2.2vmin, 1.3rem);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* keep the grid clear of the collapsed panel bar */
+main { padding-bottom: calc(var(--gap) + var(--chrome-h) + env(safe-area-inset-bottom)); }
 
 /* force 1-col layout on narrow viewports regardless of station count */
 @media (max-width: 560px) {
