@@ -1,7 +1,8 @@
 // Ratbat panels — everything that is NOT the station grid: the bottom
 // panel bar with its health strip, the panel sheet above it, the station
-// editor, the selection-policy controls, the taste and why-this-track
-// transparency panels, and the play history (relocated from app.js).
+// editor, the selection-policy controls, the taste transparency panel,
+// the public about-this-track panel, and the play history (relocated
+// from app.js).
 //
 // Load order matters and is deliberate: app.js runs first (both scripts
 // are `defer`), and classic scripts share one global lexical scope, so
@@ -64,16 +65,22 @@ const PANELS = {
     render: () => renderStationsPanel(),
   },
   taste: {
-    label: 'Taste',
+    // "Your taste" on the bar button — a bare "Taste" was a riddle to
+    // guests-turned-owners. The panel itself keeps its Taste heading.
+    label: 'Your taste',
     visible: () => !!ownerKey() && capabilities.includes('taste'),
     load: () => loadTaste(),
     render: () => renderTastePanel(),
   },
-  why: {
-    label: 'Why this track',
-    visible: () => !!ownerKey() && capabilities.includes('exclusions'),
-    load: () => loadWhy(),
-    render: () => renderWhyPanel(),
+  about: {
+    label: 'About this track',
+    // Public — guests get to learn about the track too. No bar button
+    // (inBar): the panel is track-contextual, opened from the card's
+    // "about" link, and a bar button with no track would be noise.
+    inBar: false,
+    visible: () => capabilities.includes('trackinfo'),
+    load: () => loadTrackInfo(),
+    render: () => renderAboutPanel(),
   },
 };
 
@@ -83,10 +90,10 @@ function renderPanelBar() {
   // on reconnect) must not stay on screen showing owner UI.
   if (activePanel && !PANELS[activePanel].visible()) closePanel();
   const buttons = Object.keys(PANELS)
-    .filter((name) => PANELS[name].visible())
+    .filter((name) => PANELS[name].visible() && PANELS[name].inBar !== false)
     .map((name) =>
       `<button type="button" class="pbtn${activePanel === name ? ' on' : ''}"
-        data-panel="${name}">${escapeHtml(PANELS[name].label)}</button>`)
+        data-panel="${name}" aria-label="${escapeHtml(PANELS[name].label)}">${escapeHtml(PANELS[name].label)}</button>`)
     .join('');
   $panelbar.innerHTML = `${healthStripHTML()}<span class="pbtns">${buttons}</span>`;
 }
@@ -116,7 +123,7 @@ function closePanel() {
 const panelChrome = (title, body) => `
   <div class="phead">
     <h2>${escapeHtml(title)}</h2>
-    <button type="button" class="p-close" aria-label="Close panel">×</button>
+    <button type="button" class="p-close" title="Close panel" aria-label="Close panel">×</button>
   </div>
   ${body}`;
 
@@ -141,8 +148,11 @@ function healthStripHTML() {
   if (!serverHealth || !capabilities.includes('health')) return '';
   const h = serverHealth;
   const live = h.broadcastingCount || 0;
+  // Spelled out, not compressed — "12m" alone read as anything, and a
+  // bare count read as nothing. "up 12m" and "N station(s) live" cost a
+  // word each and stop being cryptic.
   let line = live > 0
-    ? `● on air · ${fmtSpan(h.uptimeSeconds)} · ${live} live`
+    ? `● on air · up ${fmtSpan(h.uptimeSeconds)} · ${live} station${live === 1 ? '' : 's'} live`
     : `○ off air · up ${fmtSpan(h.uptimeSeconds)}`;
   // The server already trims each station to its single most recent gap
   // (24h window) — surface the newest one across stations.
@@ -830,143 +840,154 @@ function renderTastePanel() {
   $panel.innerHTML = panelChrome('Taste', body);
 }
 
-// --- Why-this-track panel (W5) ----------------------------------------
+// --- About-this-track panel -------------------------------------------
 
-// The selection filters' audit trail: HistoryStore's exclusion rows,
-// each rendered as one human sentence. enforced:false rows are the
-// mix-set filter's shadow log — "would remove", logged but let through,
-// exactly the preview the toggle's ship-dark design intended; the label
-// flips to "removed" once the filter is on.
-let exclRows = [];
-let exclStationFilter = null; // stationID (UUID string), null = all stations
-let exclLimit = 100;
-let exclDone = false;
-let exclLoading = false;
-let exclError = null;
-// Station IDs seen across fetches this panel session — a filtered fetch
-// returns one station's rows, so the chip set must not collapse to it.
-const exclStationIDs = new Set();
+// Public enrichment for the track on a card — who made it, when, what
+// else is worth knowing. GET /trackinfo needs no token; a keyless
+// broadcaster answers with mostly nulls and the panel still shows the
+// card's own facts (artist/title/origin/links) plus a quiet "no further
+// info" line, so it never looks broken.
+let aboutStation = null;  // station id the panel was opened from
+let aboutEntry = null;    // recent-row entryID, null = the now-playing track
+let aboutTrack = null;    // card-side track data captured at open time
+let aboutData = null;     // /trackinfo payload, null until it lands
+let aboutError = null;
+let aboutLoading = false;
+// Enrichment moves at the speed of discographies, not seconds — cache
+// by artist+title so reopening the panel on the same track never
+// refetches. Page-lifetime only, like everything else here.
+const trackinfoCache = new Map();
 
-const EXCL_PAGE = 100;
-const EXCL_CAP = 500; // matches the server clamp
-
-// "2h02m" for hour-plus mixes, "62m" below — the sentence reads like a
-// person describing a mix, not a duration column.
-function fmtMixDur(secs) {
-  const s = Math.max(0, Math.floor(secs));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`;
+// "1.2M", "45.3K" — listeners/playcounts compacted to a glance.
+function fmtCount(n) {
+  if (n == null || isNaN(n)) return '';
+  const one = (x) => {
+    const s = x.toFixed(1);
+    return s.endsWith('.0') ? s.slice(0, -2) : s;
+  };
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `${one(n / 1e9)}B`;
+  if (abs >= 1e6) return `${one(n / 1e6)}M`;
+  if (abs >= 1e3) return `${one(n / 1e3)}K`;
+  return String(n);
 }
 
-function exclusionSentence(r) {
-  const verb = r.enforced ? 'removed' : 'would remove';
-  let detail = '';
-  if (r.arm === 'duration' && r.durationSeconds != null) {
-    detail = ` (${fmtMixDur(r.durationSeconds)} mix)`;
-  } else if (r.matchedText) {
-    detail = ` (title matched “${r.matchedText}”)`;
+// The card's own data for what the panel is about: a recent row looked
+// up by entryID, or the display-lagged shown track — what's being
+// HEARD, the same choice openTrack makes.
+function aboutTrackFor(stationId, entryId) {
+  const s = stations.find((x) => x.id === stationId);
+  if (!s) return null;
+  if (entryId) return (s.recent || []).find((r) => r.entryID === entryId) || null;
+  return (displayState.get(stationId) || {}).shownTrack || s.currentTrack || null;
+}
+
+// Entry point for the cards' "about" links (app.js calls this, guarded).
+function openAboutPanel(stationId, entryId) {
+  aboutStation = stationId;
+  aboutEntry = entryId || null;
+  aboutTrack = aboutTrackFor(stationId, aboutEntry);
+  aboutData = null;
+  aboutError = null;
+  openPanel('about');
+}
+
+async function loadTrackInfo() {
+  const t = aboutTrack;
+  if (!t) return;
+  const key = `${t.artist}|${t.title}`;
+  if (trackinfoCache.has(key)) {
+    aboutData = trackinfoCache.get(key);
+    aboutError = null;
+    return;
   }
-  return `${verb}: ${r.artist} — ${r.title}${detail}`;
-}
-
-function stationNameFor(sid) {
-  const s = ownerStations.find((x) => x.id === sid);
-  return s ? s.name : '(deleted station)';
-}
-
-// Panel open: reset filter + paging, and fetch the owner station list
-// if the stations panel never loaded it — exclusion rows carry only
-// stationIDs, the names for the chips live in /stations/list.
-function loadWhy() {
-  exclStationFilter = null;
-  exclStationIDs.clear();
-  if (capabilities.includes('stations') && !ownerStations.length) {
-    loadOwnerStations().then(() => {
-      if (activePanel === 'why') renderWhyPanel();
-    });
-  }
-  return loadExclusions(true);
-}
-
-async function loadExclusions(reset) {
-  if (exclLoading) return;
-  if (reset) {
-    exclRows = [];
-    exclLimit = EXCL_PAGE;
-    exclDone = false;
-    exclError = null;
-  }
-  exclLoading = true;
-  if (activePanel === 'why') renderWhyPanel();
+  aboutLoading = true;
+  if (activePanel === 'about') renderAboutPanel();
   try {
-    // `station` rides as an explicit null when unfiltered — the wire's
-    // explicit-nulls discipline, same as the server's own payloads.
-    const { ok, status, data } = await apiPost('/exclusions',
-      { token: ownerKey(), station: exclStationFilter, limit: exclLimit });
+    const q = aboutEntry ? `&entry=${encodeURIComponent(aboutEntry)}` : '';
+    const { ok, status, data } =
+      await apiGet(`/trackinfo?station=${encodeURIComponent(aboutStation)}${q}`);
     if (ok) {
-      exclRows = data.exclusions || [];
-      exclRows.forEach((r) => { if (r.stationID) exclStationIDs.add(r.stationID); });
-      exclDone = exclRows.length < exclLimit || exclLimit >= EXCL_CAP;
-      exclError = null;
+      aboutData = data;
+      trackinfoCache.set(key, data);
+      aboutError = null;
     } else {
-      exclError = status === 503
-        ? briefMessage(data.message, 'catalogue unavailable')
-        : friendlyError(status, data);
+      aboutError = friendlyError(status, data);
     }
   } catch {
-    exclError = 'Couldn’t reach the broadcaster';
+    aboutError = 'Couldn’t reach the broadcaster';
   }
-  exclLoading = false;
-  if (activePanel === 'why') renderWhyPanel();
+  aboutLoading = false;
+  if (activePanel === 'about') renderAboutPanel();
 }
 
-// The chips re-fetch server-side (the wire scopes by station) — unlike
-// history, whose filter narrows already-loaded rows client-side.
-function setExclusionFilter(sid) {
-  exclStationFilter = sid || null;
-  loadExclusions(true);
+function renderAboutPanel() {
+  if (!$panel || activePanel !== 'about') return;
+  const t = aboutTrack;
+  if (!t) {
+    $panel.innerHTML = panelChrome('About this track', '<p class="pnote">Nothing playing.</p>');
+    return;
+  }
+  // The card's own facts render regardless of enrichment.
+  const head = `<p class="atitle"><b>${escapeHtml(t.artist)}</b> — ${escapeHtml(t.title)}</p>`;
+  const cardLinks = [
+    t.origin ? `<span class="badge">${escapeHtml(ORIGIN_LABELS[t.origin] || t.origin)}</span>` : '',
+    t.sourceURL ? `<a class="tlink" href="${escapeHtml(t.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
+    t.youtubeURL ? `<a class="tlink" href="${escapeHtml(t.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
+  ].filter(Boolean).join('');
+  // Everything below is explicit-null tolerant: each row assembles from
+  // the fields that are actually there and is omitted entirely when
+  // none are — no "null · null" lines, ever.
+  const a = (aboutData && aboutData.artist) || {};
+  const tr = (aboutData && aboutData.track) || {};
+  const facts = [];
+  const place = [a.city, a.country ? regionName(a.country) : null].filter(Boolean).join(', ');
+  if (place) facts.push(place);
+  if (a.firstReleaseYear != null) facts.push(`first release ${a.firstReleaseYear}`);
+  if (a.listeners != null) facts.push(`${fmtCount(a.listeners)} listeners`);
+  else if (a.playcount != null) facts.push(`${fmtCount(a.playcount)} plays`);
+  const tags = (a.tags || []).filter(Boolean).join(', ');
+  const similar = (a.similar || []).filter(Boolean).join(', ');
+  const trFacts = [];
+  if (tr.album) trFacts.push(tr.album);
+  if (tr.year != null) trFacts.push(String(tr.year));
+  if (tr.playcount != null) trFacts.push(`${fmtCount(tr.playcount)} plays`);
+  const sections = [];
+  if (facts.length) sections.push(`<p class="afacts">${escapeHtml(facts.join(' · '))}</p>`);
+  if (a.bio) sections.push(`<p class="abio">${escapeHtml(a.bio)}</p>`);
+  if (tags) sections.push(`<p class="atags">${escapeHtml(tags)}</p>`);
+  if (similar) sections.push(`<p class="atags">Similar: ${escapeHtml(similar)}</p>`);
+  if (trFacts.length || tr.wiki) {
+    sections.push(`<div class="psec"><h3>This track</h3>
+      ${trFacts.length ? `<p class="afacts">${escapeHtml(trFacts.join(' · '))}</p>` : ''}
+      ${tr.wiki ? `<p class="abio">${escapeHtml(tr.wiki)}</p>` : ''}</div>`);
+  }
+  const body = `
+    ${aboutError ? `<p class="ferror" role="alert">${escapeHtml(aboutError)}</p>` : ''}
+    ${head}
+    ${cardLinks ? `<p class="alinks">${cardLinks}</p>` : ''}
+    ${aboutLoading
+      ? '<p class="pnote">Loading…</p>'
+      : (sections.length
+        ? sections.join('')
+        : (aboutError ? '' : '<p class="pnote">No further info available.</p>'))}`;
+  $panel.innerHTML = panelChrome('About this track', body);
 }
 
-// This wire has no offset — "More" widens the limit and re-fetches from
-// the top (rows come newest-first and the cap is small), which reads
-// like history's paging without pretending the contract pages.
-function moreExclusions() {
-  if (exclDone || exclLoading) return;
-  exclLimit = Math.min(exclLimit + EXCL_PAGE, EXCL_CAP);
-  loadExclusions(false);
-}
-
-function whyFilterChips() {
-  if (exclStationIDs.size < 2) return '';
-  const chips = [...exclStationIDs].map((sid) =>
-    `<button type="button" class="chip x-filter${exclStationFilter === sid ? ' on' : ''}"
-      data-sid="${escapeHtml(sid)}">${escapeHtml(stationNameFor(sid))}</button>`).join('');
-  return `<div class="chips hfilters">
-    <button type="button" class="chip x-filter${!exclStationFilter ? ' on' : ''}" data-sid="">All</button>
-    ${chips}</div>`;
-}
-
-function renderWhyPanel() {
-  if (!$panel || activePanel !== 'why') return;
-  const rows = exclRows.map((r) => `
-    <li>
-      <span class="htime">${escapeHtml(fmtTime(r.lastExcludedAt))}</span>
-      <span class="htrack">${escapeHtml(exclusionSentence(r))}</span>
-      ${r.hitCount > 1 ? `<span class="xcount" title="Times this track came up">×${r.hitCount}</span>` : ''}
-      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
-    </li>`).join('');
-  const empty = exclError ? ''
-    : (exclLoading ? '<li class="hempty">Loading…</li>' : '<li class="hempty">Nothing filtered yet.</li>');
-  const more = !exclDone && exclRows.length
-    ? `<button type="button" class="btn x-more" ${exclLoading ? 'disabled' : ''}>More</button>`
-    : '';
-  $panel.innerHTML = panelChrome('Why this track', `
-    ${exclError ? `<p class="ferror" role="alert">${escapeHtml(exclError)}</p>` : ''}
-    <p class="fhint">Tracks the selection filters caught. “would remove” rows are the mix-set filter running in shadow — logged, not enforced.</p>
-    ${whyFilterChips()}
-    <ul class="hlist">${rows || empty}</ul>
-    ${more}`);
+// render() pokes this after every grid paint: when the display-lagged
+// shown track settles onto a new one while the panel is open on the
+// now-playing track, follow it. A history-row panel (aboutEntry set)
+// stays put — its track never changes under it.
+function onShownTrackChange() {
+  if (activePanel !== 'about' || aboutEntry) return;
+  const t = aboutTrackFor(aboutStation, null);
+  if (!t || !aboutTrack) return;
+  if (t.artist === aboutTrack.artist && t.title === aboutTrack.title) return;
+  aboutTrack = t;
+  aboutData = null;
+  aboutError = null;
+  renderAboutPanel();
+  loadTrackInfo();
 }
 
 // --- Play history panel -----------------------------------------------
@@ -1080,9 +1101,6 @@ function onPanelClick(e) {
     historyFilter = btn.dataset.sid || null;
     return renderHistoryPanel();
   }
-  // Why-this-track
-  if (btn.classList.contains('x-more')) return void moreExclusions();
-  if (btn.classList.contains('x-filter')) return void setExclusionFilter(btn.dataset.sid);
   // Stations list
   if (btn.classList.contains('s-new')) return newStationFlow();
   if (btn.classList.contains('s-startstop') && row) return void startStopStation(row.dataset.id);

@@ -19,7 +19,7 @@ The lock button logs in with the broadcaster's owner passcode (validated against
 - **Station editor** — create, edit, start, stop, auto-start, and delete stations (NTS / Last.fm / Bandcamp, plus Library Radio when the backend advertises it in `vocab.kinds`) from the browser; forms are built from the server's `/vocab` so tag palettes and options never go stale.
 - **Selection controls** — the global new-music share dial and mix-set filter (`/policy`).
 - **Taste panel** — what the selection pipeline believes about your taste (`/taste`).
-- **Why-this-track** — the mix-set filter's audit trail, shadow rows included (`/exclusions`).
+- **About this track** — public artist/track enrichment on the now-playing card (`/trackinfo`).
 - A health strip (on-air / uptime / most recent gap) from `/health`.
 
 ### Feature detection

@@ -169,6 +169,10 @@ main {
   max-width: 100%;
   font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
 }
+/* The "from" prefix recedes further than the album name it introduces. */
+.station .now .album .from {
+  opacity: 0.65;
+}
 /* Textual progress — deliberately a clock, not a bar. */
 .station .now .progress {
   font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
@@ -177,6 +181,13 @@ main {
 .station .now .status {
   color: var(--muted);
   font-style: italic;
+}
+/* "tap to listen" — the one hint a non-active card carries; the same
+   quiet ink and size as .album/.progress, never louder. */
+.station .hint {
+  color: var(--muted);
+  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
+  text-align: center;
 }
 .station.loading .now .status {
   animation: blink 1.4s ease-in-out infinite;
@@ -312,6 +323,15 @@ main {
   padding: 0 0.45em;
   font-variant-caps: small-caps;
   letter-spacing: 0.04em;
+}
+/* "About" — a button dressed as a provenance link; .tlink supplies the
+   ink, this strips the UA button chrome. */
+.station .about-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
 }
 
 .station .foot .note {
@@ -560,7 +580,7 @@ dialog input:focus-visible,
 }
 #panel .hsaved { color: var(--dot); flex-shrink: 0; }
 #panel .hempty { font-style: italic; }
-#panel .h-more, #panel .x-more { margin-top: var(--space); }
+#panel .h-more { margin-top: var(--space); }
 #panel .tlink {
   color: var(--muted);
   text-decoration: underline;
@@ -569,7 +589,7 @@ dialog input:focus-visible,
 }
 #panel .tlink:hover { color: var(--fg); }
 
-/* Selection policy + taste + why-this-track — text-first on purpose.
+/* Selection policy + taste + about-this-track — text-first on purpose.
    The only "bar" anywhere is a dotted leader between a name and its
    score (the table-of-contents idiom), so these panels stay ink on
    paper like everything else. */
@@ -599,7 +619,16 @@ dialog input:focus-visible,
   padding: 0.15rem 0;
 }
 #panel .tlean { flex-basis: 100%; color: var(--muted); font-style: italic; }
-#panel .xcount { color: var(--muted); flex-shrink: 0; }
+/* About-this-track — plain paragraphs, same ink as everything else. */
+#panel .atitle { margin: 0 0 0.3rem; }
+#panel .alinks {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin: 0 0 var(--space);
+}
+#panel .afacts, #panel .atags { color: var(--muted); margin: 0 0 0.3rem; }
+#panel .abio { max-width: 40rem; line-height: 1.6; margin: 0.3rem 0 var(--space); }
 
 /* Delete confirm — the one destructive dialog. Backdrop scrim matches
    the #lock color-mix idiom. */

@@ -139,8 +139,8 @@ function boot(opts = {}) {
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onPanelChange,
-  loadTaste, renderTastePanel, loadWhy, loadExclusions, renderWhyPanel,
-  moreExclusions, setExclusionFilter, exclusionSentence, fmtMixDur,
+  loadTaste, renderTastePanel,
+  openAboutPanel, renderAboutPanel, loadTrackInfo, fmtCount, apiGet,
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
   get vocab() { return vocab; },
@@ -154,7 +154,6 @@ function boot(opts = {}) {
   set editor(v) { editor = v; },
   get policy() { return policy; },
   get taste() { return taste; },
-  get exclRows() { return exclRows; },
 };`, ctx);
   return { t: ctx.__test, els, state, ctx };
 }
@@ -469,8 +468,8 @@ test('capabilities: new server + owner key → stations button and health strip'
   const bar = els.panelbar.innerHTML;
   assert.ok(bar.includes('data-panel="stations"'), 'stations button');
   assert.ok(bar.includes('on air'), 'on-air strip');
-  assert.ok(bar.includes('3d 4h'), 'uptime');
-  assert.ok(bar.includes('2 live'), 'broadcasting count');
+  assert.ok(bar.includes('up 3d 4h'), 'uptime labeled');
+  assert.ok(bar.includes('2 stations live'), 'broadcasting count spelled out');
   assert.ok(bar.includes('gap 6m'), 'most recent gap');
 });
 
@@ -694,14 +693,17 @@ const changeEvt = (cls, props) => ({
   target: { classList: { contains: (c) => c === cls }, closest: () => null, ...props },
 });
 
-test('capabilities: taste/why buttons and the Selection section gate per capability', async () => {
-  // Full v2 server + owner key: everything renders.
+test('capabilities: taste button and Selection section gate per capability; why is gone', async () => {
+  // Full v2 server + owner key: taste renders; the why button is gone
+  // even though the server still advertises `exclusions`.
   const full = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
   full.t.renderPanelBar();
   const bar = full.els.panelbar.innerHTML;
   assert.ok(bar.includes('data-panel="taste"'), 'taste button');
-  assert.ok(bar.includes('data-panel="why"'), 'why button');
+  assert.ok(!bar.includes('data-panel="why"'), 'no why button despite the exclusions capability');
+  await full.t.openPanel('why');
+  assert.strictEqual(full.t.activePanel, null, 'why panel no longer exists');
   await full.t.openPanel('stations');
   assert.ok(full.els.panel.innerHTML.includes('Selection'), 'policy rides the stations panel');
 
@@ -715,8 +717,8 @@ test('capabilities: taste/why buttons and the Selection section gate per capabil
   assert.strictEqual(guest.t.activePanel, null);
 
   // Owner against a v1 server (three capabilities): the stations panel
-  // works but carries no Selection section; taste/why never render —
-  // each surface gates on its own string, not on "new server".
+  // works but carries no Selection section; taste never renders — each
+  // surface gates on its own string, not on "new server".
   const v1 = ownerBoot();
   await settle();
   v1.t.renderPanelBar();
@@ -845,80 +847,164 @@ test('403 on an owner surface drops the key and closes the panel', async () => {
   assert.strictEqual(els.panel.hidden, true);
 });
 
-// One exclusion row in the pinned wire shape — explicit nulls and all.
-const exclRow = (over = {}) => ({
-  id: 'e1', stationID: 's1', artist: 'Ossia', title: 'Vertigo',
-  arm: 'title', matchedText: 'megamix', durationSeconds: null,
-  durationSource: null, sourceKind: 'nts', sourceURL: null,
-  enforced: true, everEnforced: true, enforcedCount: 3, hitCount: 1,
-  firstExcludedAt: 1755856800, lastExcludedAt: 1755856800,
-  ...over,
+// --- About this track (W7) --------------------------------------------
+
+// /health with the public enrichment capability.
+const TRACKINFO_HEALTH = { ...HEALTH, capabilities: ['health', 'trackinfo'] };
+
+// A fully enriched /trackinfo payload (Last.fm key configured).
+const TRACKINFO = {
+  artist: {
+    name: 'Artist A', city: 'Kingston', country: 'JM',
+    firstReleaseYear: 1976, listeners: 1234567, playcount: 89000000,
+    bio: 'Dub pioneer from the golden era.',
+    tags: ['dub', 'reggae', 'roots'],
+    similar: ['King Tubby', 'Scientist', 'Prince Jammy'],
+  },
+  track: {
+    title: 'Alpha', album: 'LP One', year: 1979, playcount: 45300,
+    wiki: 'Recorded at Channel One in a single take.',
+  },
+};
+
+// A keyless broadcaster: the route answers, every enrichment field null.
+const TRACKINFO_EMPTY = {
+  artist: {
+    name: null, city: null, country: null, firstReleaseYear: null,
+    listeners: null, playcount: null, bio: null, tags: [], similar: [],
+  },
+  track: null,
+};
+
+const trackinfoBoot = (info = TRACKINFO) => boot({
+  fetchImpl: routed({
+    '/health': () => ({ status: 200, body: TRACKINFO_HEALTH }),
+    '/trackinfo': () => ({ status: 200, body: info }),
+  }),
 });
 
-test('why: rows read as sentences — removed vs would-remove shadow rows', async () => {
-  const rows = [
-    exclRow({ hitCount: 3, sourceURL: 'https://x.example/mix' }),
-    exclRow({
-      id: 'e2', artist: 'Jah Shaka', title: 'Commandments Of Dub',
-      arm: 'duration', matchedText: null, durationSeconds: 7320, enforced: false,
-    }),
-  ];
-  const { t, els, state } = boot({
-    storedKey: 'valid',
-    fetchImpl: routed({
-      '/health': () => ({ status: 200, body: FULL_HEALTH }),
-      '/exclusions': () => ({ status: 200, body: { exclusions: rows } }),
-    }),
-  });
-  await settle();
-  await t.openPanel('why');
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('removed: Ossia — Vertigo (title matched \u201cmegamix\u201d)'),
-    'enforced row is a plain sentence');
-  assert.ok(html.includes('would remove: Jah Shaka — Commandments Of Dub (2h02m mix)'),
-    'shadow row labeled per the ship-dark design');
-  assert.ok(html.includes('\u00d73'), 'repeat hits surfaced');
-  assert.ok(html.includes('https://x.example/mix'), 'source link');
-  // The wire body: station rides as an EXPLICIT null when unfiltered.
-  const bodies = state.fetchCalls
-    .filter(([u]) => String(u).includes('/exclusions'))
-    .map(([, o]) => JSON.parse(o.body));
-  assert.deepStrictEqual(bodies[0], { token: 'valid', station: null, limit: 100 });
+test('fmtCount compacts to K/M/B and passes small numbers through', ({ t }) => {
+  assert.strictEqual(t.fmtCount(0), '0');
+  assert.strictEqual(t.fmtCount(999), '999');
+  assert.strictEqual(t.fmtCount(1200), '1.2K');
+  assert.strictEqual(t.fmtCount(45300), '45.3K');
+  assert.strictEqual(t.fmtCount(1234567), '1.2M');
+  assert.strictEqual(t.fmtCount(2000000000), '2B');
+  assert.strictEqual(t.fmtCount(null), '');
 });
 
-test('why: station chips re-fetch server-side; More widens the limit (no offset on this wire)', async () => {
-  const bodies = [];
-  const { t, els } = boot({
-    storedKey: 'valid',
-    fetchImpl: routed({
-      '/health': () => ({ status: 200, body: FULL_HEALTH }),
-      '/stations/list': () => ({
-        status: 200, body: { stations: [{ ...srvNTS, id: 's1', name: 'One' }] },
-      }),
-      '/exclusions': (b) => {
-        bodies.push(b);
-        // A full page (rows.length === limit) keeps More on offer.
-        const rows = Array.from({ length: b.limit }, (_, i) =>
-          exclRow({ id: `e${i}`, stationID: b.station || (i % 2 ? 's2' : 's1') }));
-        return { status: 200, body: { exclusions: rows } };
-      },
-    }),
+test('about: card affordance appears only with the trackinfo capability — guests included', async () => {
+  const { t, els } = trackinfoBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('about-link'), 'about link on the active card (guest, no key)');
+  assert.ok(html.includes('data-entry="e1"'), 'recent rows offer about too');
+  t.renderPanelBar();
+  assert.ok(!els.panelbar.innerHTML.includes('data-panel="about"'),
+    'no bar button — the panel is card-contextual');
+
+  // Same track, server without the capability: no affordance anywhere,
+  // and openPanel refuses.
+  const plain = boot({
+    fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
   });
   await settle();
-  await t.openPanel('why');
+  plain.t.activeId = 'S1';
+  plain.t.adoptNow(payload(trackA));
+  assert.ok(!plain.els.stations.innerHTML.includes('about-link'));
+  await plain.t.openPanel('about');
+  assert.strictEqual(plain.t.activePanel, null);
+});
+
+test('about: fetch URL carries the station and, for a history row, the entry', async () => {
+  const { t, state } = trackinfoBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  const urls = () =>
+    state.fetchCalls.map(([u]) => String(u)).filter((u) => u.includes('/trackinfo'));
+  t.openAboutPanel('S1', null);
+  await settle();
+  assert.strictEqual(urls()[0], 'https://radio.example.com/trackinfo?station=S1');
+  t.closePanel();
+  t.openAboutPanel('S1', 'e1');
+  await settle();
+  assert.strictEqual(urls()[1], 'https://radio.example.com/trackinfo?station=S1&entry=e1');
+});
+
+test('about: full enrichment renders facts line, bio, tags, similar, track section', async () => {
+  const { t, els } = trackinfoBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  t.openAboutPanel('S1', null);
   await settle();
   const html = els.panel.innerHTML;
-  assert.ok(html.includes('x-filter'), 'chips appear once two stations show up');
-  assert.ok(html.includes('One'), 'chip labeled from /stations/list');
-  assert.ok(html.includes('(deleted station)'), 'unknown station still filterable');
-  assert.ok(html.includes('x-more'), 'full page offers More');
-  t.setExclusionFilter('s2');
+  assert.ok(html.includes('<b>Artist A</b> — Alpha'), 'title line from the card');
+  assert.ok(html.includes('Kingston, Jamaica · first release 1976 · 1.2M listeners'),
+    'facts line — localized region, compacted listeners');
+  assert.ok(html.includes('Dub pioneer from the golden era.'), 'bio paragraph');
+  assert.ok(html.includes('dub, reggae, roots'), 'tags as a plain comma row');
+  assert.ok(html.includes('Similar: King Tubby, Scientist, Prince Jammy'), 'similar artists');
+  assert.ok(html.includes('LP One · 1979 · 45.3K plays'), 'track facts');
+  assert.ok(html.includes('Recorded at Channel One'), 'track wiki paragraph');
+  assert.ok(!html.includes('No further info'), 'no empty-state line when enriched');
+});
+
+test('about: a keyless server (all nulls) still renders card facts + a quiet empty line', async () => {
+  const { t, els } = trackinfoBoot(TRACKINFO_EMPTY);
   await settle();
-  assert.deepStrictEqual(wire(bodies[1]), { token: 'valid', station: 's2', limit: 100 });
-  t.moreExclusions();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, sourceURL: 'https://x.example/rel' }));
+  t.openAboutPanel('S1', null);
   await settle();
-  assert.deepStrictEqual(wire(bodies[2]), { token: 'valid', station: 's2', limit: 200 });
-  assert.strictEqual(t.exclRows.length, 200, 'widened fetch replaces, not appends');
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('<b>Artist A</b> — Alpha'), 'artist/title from the card');
+  assert.ok(html.includes('>Last.fm<'), 'origin from the card');
+  assert.ok(html.includes('https://x.example/rel'), 'source link from the card');
+  assert.ok(html.includes('No further info available.'), 'quiet empty line');
+  assert.ok(!html.includes('afacts'), 'no empty rows rendered');
+});
+
+test('about: reopening on the same track serves the cache — no second fetch', async () => {
+  const { t, state } = trackinfoBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  const count = () =>
+    state.fetchCalls.filter(([u]) => String(u).includes('/trackinfo')).length;
+  t.openAboutPanel('S1', null);
+  await settle();
+  assert.strictEqual(count(), 1);
+  t.closePanel();
+  t.openAboutPanel('S1', null);
+  await settle();
+  assert.strictEqual(count(), 1, 'second open, same track — cache hit');
+});
+
+test('about: the open panel follows the shown track once the display settles', async () => {
+  const { t, els, state } = trackinfoBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  t.openAboutPanel('S1', null);
+  await settle();
+  const count = () =>
+    state.fetchCalls.filter(([u]) => String(u).includes('/trackinfo')).length;
+  assert.strictEqual(count(), 1);
+  // A new track arrives; the display holds the old one through the lag
+  // window — the panel must not jump ahead of what's being heard.
+  const trackB = { ...trackA, title: 'Beta', durationSeconds: 15 };
+  t.adoptNow(payload(trackB));
+  await settle();
+  assert.strictEqual(count(), 1, 'no refetch during the lag window');
+  state.nowMs = 5_100; // > displayDelayFor(B)
+  t.render();
+  await settle();
+  assert.strictEqual(count(), 2, 'settled track change refetches');
+  assert.ok(els.panel.innerHTML.includes('— Beta'), 'panel retitled to the new track');
 });
 
 // --- Library Radio (W6) -----------------------------------------------
@@ -1038,6 +1124,143 @@ test('libraryRadio: stations-panel badge and now-playing origin badge', async ()
   t.activeId = 'S1';
   t.adoptNow(payload({ ...trackA, origin: 'library' }));
   assert.ok(els.stations.innerHTML.includes('>Library<'), 'origin badge mapped');
+});
+
+// --- Legibility pass --------------------------------------------------
+
+test('now block: album line reads "from <album>" with a muted prefix', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  assert.ok(els.stations.innerHTML.includes(
+    '<span class="album"><span class="from">from</span> LP One</span>'),
+    'album line carries the from prefix');
+});
+
+test('now block: album line suppressed when it repeats the title (trim + case-insensitive)', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, album: '  ALPHA ' })); // self-titled, sloppy casing
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('Alpha'), 'title still shown');
+  assert.ok(!html.includes('class="album"'), 'no album line for a self-titled release');
+});
+
+test('now block: album line suppressed when the album is empty', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, album: '' }));
+  assert.ok(!els.stations.innerHTML.includes('class="album"'));
+});
+
+test('origin badge renders on non-active cards; links and about stay active-only', async () => {
+  const { t, els } = trackinfoBoot();
+  await settle();
+  // Nobody tuned in — the card still says where the track came from.
+  t.adoptNow(payload({ ...trackA, sourceURL: 'https://x.example/rel' }));
+  let html = els.stations.innerHTML;
+  assert.ok(html.includes('class="origin"') && html.includes('>Last.fm<'),
+    'origin badge on a non-active card');
+  assert.ok(!html.includes('x.example'), 'source link held back until active');
+  assert.ok(!html.includes('aria-label="About Artist A'),
+    'now-playing about link held back until active');
+  t.activeId = 'S1';
+  t.render();
+  html = els.stations.innerHTML;
+  assert.ok(html.includes('x.example'), 'active card gets the links');
+  assert.ok(html.includes('aria-label="About Artist A — Alpha"'), 'and the about link');
+});
+
+test('edit pencil: guest never gets it even when the server advertises stations', async () => {
+  // Regression: the pencil must share the owner-action gate — key AND
+  // capability — not render for logged-out guests.
+  const guest = boot({
+    fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
+  });
+  await settle();
+  assert.ok(guest.t.capabilities.includes('stations'), 'server does advertise stations');
+  guest.t.adoptNow(payload(trackA));
+  assert.ok(!guest.els.stations.innerHTML.includes('act--edit'), 'no pencil for guests');
+
+  const owner = ownerBoot();
+  await settle();
+  owner.t.adoptNow(payload(trackA));
+  const html = owner.els.stations.innerHTML;
+  assert.ok(html.includes('act--edit'), 'owner gets the pencil');
+  assert.ok(html.includes('title="Edit station" aria-label="Edit station"'), 'labeled');
+});
+
+test('health strip: singular/plural station count and "up" before the uptime', async () => {
+  const stripBoot = (count) => boot({
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: { ...HEALTH, broadcastingCount: count } }),
+    }),
+  });
+  const one = stripBoot(1);
+  await settle();
+  one.t.renderPanelBar();
+  assert.ok(one.els.panelbar.innerHTML.includes('● on air · up 3d 4h · 1 station live'),
+    `singular (${one.els.panelbar.innerHTML})`);
+  const two = stripBoot(2);
+  await settle();
+  two.t.renderPanelBar();
+  assert.ok(two.els.panelbar.innerHTML.includes('2 stations live'), 'plural');
+  const off = stripBoot(0);
+  await settle();
+  off.t.renderPanelBar();
+  assert.ok(off.els.panelbar.innerHTML.includes('○ off air · up 3d 4h'),
+    'off-air keeps its shape with the same up-wording');
+});
+
+test('panel bar: taste button says "Your taste" and buttons carry matching aria-labels', async () => {
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }),
+  });
+  await settle();
+  t.renderPanelBar();
+  const bar = els.panelbar.innerHTML;
+  assert.ok(bar.includes('>Your taste</button>'), 'renamed label');
+  assert.ok(bar.includes('aria-label="Your taste"'), 'aria matches the text');
+  assert.ok(bar.includes('>Play history</button>'), 'history label unchanged');
+  assert.ok(bar.includes('aria-label="Play history"'));
+});
+
+test('tap-to-listen hint: on non-active cards only, gone while active or connecting', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  assert.ok(els.stations.innerHTML.includes('>tap to listen<'), 'non-active card hints');
+  t.activeId = 'S1';
+  t.render();
+  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card does not');
+  // Connecting: src assigned, not paused, no data yet.
+  els.audio.src = 'https://radio.example.com/streams/s1';
+  els.audio.paused = false;
+  els.audio.readyState = 1;
+  t.render();
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('Connecting…'), 'loading state shown');
+  assert.ok(!html.includes('tap to listen'), 'no hint while connecting');
+});
+
+test('a11y: share carries title+aria, transport glyph is Play/Pause per state', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload(trackA));
+  let html = els.stations.innerHTML;
+  assert.ok(html.includes('title="Share this track" aria-label="Share this track"'), 'share labeled');
+  assert.ok(html.includes('class="transport" title="Play"'), 'paused card says Play');
+  els.audio.paused = false;
+  els.audio.readyState = 4;
+  t.render();
+  html = els.stations.innerHTML;
+  assert.ok(html.includes('class="transport" title="Pause"'), 'playing card says Pause');
+  assert.ok(html.includes('aria-label="Pause"'));
 });
 
 // --- Go ---------------------------------------------------------------
