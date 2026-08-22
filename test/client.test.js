@@ -138,6 +138,9 @@ function boot(opts = {}) {
   loadOwnerStations, renderStationsPanel, loadHistory, renderHistoryPanel,
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
+  loadPolicy, setPolicy, policySectionHTML, onPanelChange,
+  loadTaste, renderTastePanel, loadWhy, loadExclusions, renderWhyPanel,
+  moreExclusions, setExclusionFilter, exclusionSentence, fmtMixDur,
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
   get ownerStations() { return ownerStations; },
@@ -147,6 +150,9 @@ function boot(opts = {}) {
   set historyFilter(v) { historyFilter = v; },
   get editor() { return editor; },
   set editor(v) { editor = v; },
+  get policy() { return policy; },
+  get taste() { return taste; },
+  get exclRows() { return exclRows; },
 };`, ctx);
   return { t: ctx.__test, els, state, ctx };
 }
@@ -646,6 +652,271 @@ test('history: per-station filter is client-side over accumulated rows', async (
   t.historyFilter = null;
   t.renderHistoryPanel();
   assert.strictEqual(shown(), 3);
+});
+
+// --- Policy + transparency panels (W4/W5) -----------------------------
+
+// /health as the v2 contract ships it — all six capability strings.
+const FULL_HEALTH = {
+  ...HEALTH,
+  capabilities: ['health', 'stations', 'vocab', 'policy', 'taste', 'exclusions'],
+};
+
+const POLICY = { newMusicShare: 0.3, excludeMixSets: false, mixSetMinimumDuration: 1500 };
+
+// Policy routes: /policy/get serves the fixture, /policy/set records
+// each body into `sets` and echoes the merged state back the way the
+// server does (or refuses with opts.setStatus).
+const policyRoutes = (sets, opts = {}) => ({
+  '/health': () => ({ status: 200, body: FULL_HEALTH }),
+  '/policy/get': () => ({ status: 200, body: POLICY }),
+  '/policy/set': (b) => {
+    sets.push(b);
+    if (opts.setStatus) {
+      return { status: opts.setStatus, body: { status: 'error', message: 'nope' } };
+    }
+    return {
+      status: 200,
+      body: {
+        newMusicShare: 'newMusicShare' in b ? b.newMusicShare : POLICY.newMusicShare,
+        excludeMixSets: 'excludeMixSets' in b ? b.excludeMixSets : POLICY.excludeMixSets,
+        mixSetMinimumDuration: POLICY.mixSetMinimumDuration,
+      },
+    };
+  },
+});
+
+// A change event the way onPanelChange sees one — just enough target to
+// hit exactly one classList branch.
+const changeEvt = (cls, props) => ({
+  target: { classList: { contains: (c) => c === cls }, closest: () => null, ...props },
+});
+
+test('capabilities: taste/why buttons and the Selection section gate per capability', async () => {
+  // Full v2 server + owner key: everything renders.
+  const full = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
+  await settle();
+  full.t.renderPanelBar();
+  const bar = full.els.panelbar.innerHTML;
+  assert.ok(bar.includes('data-panel="taste"'), 'taste button');
+  assert.ok(bar.includes('data-panel="why"'), 'why button');
+  await full.t.openPanel('stations');
+  assert.ok(full.els.panel.innerHTML.includes('Selection'), 'policy rides the stations panel');
+
+  // Same server, no key: guests get none of it, and openPanel refuses.
+  const guest = boot({ fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }) });
+  await settle();
+  guest.t.renderPanelBar();
+  assert.ok(!guest.els.panelbar.innerHTML.includes('data-panel="taste"'));
+  assert.ok(!guest.els.panelbar.innerHTML.includes('data-panel="why"'));
+  await guest.t.openPanel('taste');
+  assert.strictEqual(guest.t.activePanel, null);
+
+  // Owner against a v1 server (three capabilities): the stations panel
+  // works but carries no Selection section; taste/why never render —
+  // each surface gates on its own string, not on "new server".
+  const v1 = ownerBoot();
+  await settle();
+  v1.t.renderPanelBar();
+  assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="taste"'));
+  assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="why"'));
+  await v1.t.openPanel('stations');
+  assert.ok(!v1.els.panel.innerHTML.includes('Selection'), 'no policy section without the capability');
+});
+
+test('policy: /policy/get lands with the stations open — dial, read-only duration, honest copy', async () => {
+  const { t, els, state } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
+  await settle();
+  await t.openPanel('stations');
+  const gets = state.fetchCalls.filter(([u]) => String(u).includes('/policy/get'));
+  assert.strictEqual(gets.length, 1, 'one get per open');
+  assert.deepStrictEqual(JSON.parse(gets[0][1].body), { token: 'valid' });
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('pol-share'), 'dial rendered');
+  assert.ok(html.includes('value="30"'), 'share adopted from the server');
+  assert.ok(html.includes('30%'), 'labeled');
+  assert.ok(html.includes('not in your library'), '"new" defined honestly');
+  assert.ok(html.includes('longer than 25m'), 'mixSetMinimumDuration rendered read-only');
+  assert.ok(html.includes('next pool refill'), 'apply-time copy');
+});
+
+test('policy: each control sends only its own key — absent means untouched, null means off', async () => {
+  const sets = [];
+  const { t, els } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes(sets)) });
+  await settle();
+  await t.openPanel('stations');
+
+  // Mix-set toggle: excludeMixSets alone — an untouched dial must not
+  // ride along (absent = leave alone on the server's double optional).
+  t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
+  await settle();
+  assert.deepStrictEqual(wire(sets[0]), { token: 'valid', excludeMixSets: true });
+  assert.ok(!('newMusicShare' in sets[0]), 'untouched dial absent from the body');
+
+  // Dial off: newMusicShare present as an EXPLICIT null — the -1
+  // sentinel never leaves the server.
+  t.onPanelChange(changeEvt('pol-share-on', { checked: false }));
+  await settle();
+  assert.ok('newMusicShare' in sets[1], 'key present');
+  assert.strictEqual(sets[1].newMusicShare, null, 'explicit null = off');
+  assert.ok(!('excludeMixSets' in sets[1]), 'toggle not dragged along');
+  assert.ok(els.panel.innerHTML.includes('>off<'), 'off state labeled');
+
+  // Dial back on: restores the remembered share, not zero.
+  t.onPanelChange(changeEvt('pol-share-on', { checked: true }));
+  await settle();
+  assert.strictEqual(sets[2].newMusicShare, 0.3);
+
+  // Slider commit sends the new share and nothing else.
+  t.onPanelChange(changeEvt('pol-share', { value: '55' }));
+  await settle();
+  assert.deepStrictEqual(wire(sets[3]), { token: 'valid', newMusicShare: 0.55 });
+});
+
+test('policy: a refused set (503) reverts the optimistic patch', async () => {
+  const sets = [];
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed(policyRoutes(sets, { setStatus: 503 })),
+  });
+  await settle();
+  await t.openPanel('stations');
+  t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
+  assert.strictEqual(t.policy.excludeMixSets, true, 'optimistic flip');
+  await settle();
+  assert.strictEqual(t.policy.excludeMixSets, false, 'reverted on refusal');
+  assert.ok(els.panel.innerHTML.includes('Broadcaster hiccup'), 'note shown');
+});
+
+const TASTE = {
+  libraryArtists: [{ artist: 'Prince Far I', score: 0.92 }, { artist: 'Scientist', score: 0.4 }],
+  libraryTags: [{ tag: 'dub', score: 0.61 }],
+  stations: [{
+    id: 'S1', name: 'One', topAffinityArtists: ['Scientist', 'King Tubby'],
+    counts: { plays: 214, saves: 38, boosts: 7, skips: 91 },
+  }],
+};
+
+test('taste: fixture renders as text rows — scores, counts, leanings, no charts', async () => {
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: FULL_HEALTH }),
+      '/taste': () => ({ status: 200, body: TASTE }),
+    }),
+  });
+  await settle();
+  await t.openPanel('taste');
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('Prince Far I') && html.includes('92%'), 'artist score as text');
+  assert.ok(html.includes('dub') && html.includes('61%'), 'tag score');
+  assert.ok(html.includes('214 plays · 38 saves · 7 boosts · 91 skips'), 'per-station counts');
+  assert.ok(html.includes('leaning Scientist, King Tubby'), 'top affinity artists');
+  assert.ok(!/<svg|<canvas|<img/.test(html), 'text only');
+});
+
+test('taste: 503 shows the catalogue message instead of a dead panel', async () => {
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: FULL_HEALTH }),
+      '/taste': () => ({ status: 503, body: { status: 'error', message: 'catalogue unavailable' } }),
+    }),
+  });
+  await settle();
+  await t.openPanel('taste');
+  assert.ok(els.panel.innerHTML.includes('catalogue unavailable'));
+});
+
+test('403 on an owner surface drops the key and closes the panel', async () => {
+  const { t, els, state } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: FULL_HEALTH }),
+      '/taste': () => ({ status: 403, body: {} }),
+    }),
+  });
+  await settle();
+  await t.openPanel('taste');
+  assert.strictEqual(state.store.has('ratbat_key'), false, 'key dropped centrally');
+  assert.strictEqual(t.activePanel, null, 'gate closed the panel');
+  assert.strictEqual(els.panel.hidden, true);
+});
+
+// One exclusion row in the pinned wire shape — explicit nulls and all.
+const exclRow = (over = {}) => ({
+  id: 'e1', stationID: 's1', artist: 'Ossia', title: 'Vertigo',
+  arm: 'title', matchedText: 'megamix', durationSeconds: null,
+  durationSource: null, sourceKind: 'nts', sourceURL: null,
+  enforced: true, everEnforced: true, enforcedCount: 3, hitCount: 1,
+  firstExcludedAt: 1755856800, lastExcludedAt: 1755856800,
+  ...over,
+});
+
+test('why: rows read as sentences — removed vs would-remove shadow rows', async () => {
+  const rows = [
+    exclRow({ hitCount: 3, sourceURL: 'https://x.example/mix' }),
+    exclRow({
+      id: 'e2', artist: 'Jah Shaka', title: 'Commandments Of Dub',
+      arm: 'duration', matchedText: null, durationSeconds: 7320, enforced: false,
+    }),
+  ];
+  const { t, els, state } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: FULL_HEALTH }),
+      '/exclusions': () => ({ status: 200, body: { exclusions: rows } }),
+    }),
+  });
+  await settle();
+  await t.openPanel('why');
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('removed: Ossia — Vertigo (title matched \u201cmegamix\u201d)'),
+    'enforced row is a plain sentence');
+  assert.ok(html.includes('would remove: Jah Shaka — Commandments Of Dub (2h02m mix)'),
+    'shadow row labeled per the ship-dark design');
+  assert.ok(html.includes('\u00d73'), 'repeat hits surfaced');
+  assert.ok(html.includes('https://x.example/mix'), 'source link');
+  // The wire body: station rides as an EXPLICIT null when unfiltered.
+  const bodies = state.fetchCalls
+    .filter(([u]) => String(u).includes('/exclusions'))
+    .map(([, o]) => JSON.parse(o.body));
+  assert.deepStrictEqual(bodies[0], { token: 'valid', station: null, limit: 100 });
+});
+
+test('why: station chips re-fetch server-side; More widens the limit (no offset on this wire)', async () => {
+  const bodies = [];
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: FULL_HEALTH }),
+      '/stations/list': () => ({
+        status: 200, body: { stations: [{ ...srvNTS, id: 's1', name: 'One' }] },
+      }),
+      '/exclusions': (b) => {
+        bodies.push(b);
+        // A full page (rows.length === limit) keeps More on offer.
+        const rows = Array.from({ length: b.limit }, (_, i) =>
+          exclRow({ id: `e${i}`, stationID: b.station || (i % 2 ? 's2' : 's1') }));
+        return { status: 200, body: { exclusions: rows } };
+      },
+    }),
+  });
+  await settle();
+  await t.openPanel('why');
+  await settle();
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('x-filter'), 'chips appear once two stations show up');
+  assert.ok(html.includes('One'), 'chip labeled from /stations/list');
+  assert.ok(html.includes('(deleted station)'), 'unknown station still filterable');
+  assert.ok(html.includes('x-more'), 'full page offers More');
+  t.setExclusionFilter('s2');
+  await settle();
+  assert.deepStrictEqual(wire(bodies[1]), { token: 'valid', station: 's2', limit: 100 });
+  t.moreExclusions();
+  await settle();
+  assert.deepStrictEqual(wire(bodies[2]), { token: 'valid', station: 's2', limit: 200 });
+  assert.strictEqual(t.exclRows.length, 200, 'widened fetch replaces, not appends');
 });
 
 // --- Go ---------------------------------------------------------------

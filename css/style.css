@@ -560,7 +560,7 @@ dialog input:focus-visible,
 }
 #panel .hsaved { color: var(--dot); flex-shrink: 0; }
 #panel .hempty { font-style: italic; }
-#panel .h-more { margin-top: var(--space); }
+#panel .h-more, #panel .x-more { margin-top: var(--space); }
 #panel .tlink {
   color: var(--muted);
   text-decoration: underline;
@@ -568,6 +568,38 @@ dialog input:focus-visible,
   flex-shrink: 0;
 }
 #panel .tlink:hover { color: var(--fg); }
+
+/* Selection policy + taste + why-this-track — text-first on purpose.
+   The only "bar" anywhere is a dotted leader between a name and its
+   score (the table-of-contents idiom), so these panels stay ink on
+   paper like everything else. */
+#panel .psec { margin-top: calc(var(--space) * 2); max-width: 28rem; }
+#panel .psec h3 { margin: 0 0 0.3rem; font-size: 1em; font-weight: 700; }
+#panel .pol input[type="range"] { flex: 1; max-width: 14rem; }
+#panel .pol-share-label {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+}
+#panel .slist { list-style: none; margin: 0; padding: 0; }
+#panel .srow { display: flex; align-items: baseline; gap: 0.5em; line-height: 1.7; }
+#panel .sleader {
+  flex: 1;
+  min-width: 2em;
+  border-bottom: 1px dotted var(--border-strong);
+  transform: translateY(-0.3em);
+}
+#panel .sscore { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+#panel .trow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.6em;
+  line-height: 1.7;
+  padding: 0.15rem 0;
+}
+#panel .tlean { flex-basis: 100%; color: var(--muted); font-style: italic; }
+#panel .xcount { color: var(--muted); flex-shrink: 0; }
 
 /* Delete confirm — the one destructive dialog. Backdrop scrim matches
    the #lock color-mix idiom. */

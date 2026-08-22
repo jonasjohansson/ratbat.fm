@@ -1,6 +1,7 @@
 // Ratbat panels — everything that is NOT the station grid: the bottom
 // panel bar with its health strip, the panel sheet above it, the station
-// editor, and the play history (relocated here from app.js).
+// editor, the selection-policy controls, the taste and why-this-track
+// transparency panels, and the play history (relocated from app.js).
 //
 // Load order matters and is deliberate: app.js runs first (both scripts
 // are `defer`), and classic scripts share one global lexical scope, so
@@ -57,8 +58,22 @@ const PANELS = {
   stations: {
     label: 'Stations',
     visible: () => !!ownerKey() && capabilities.includes('stations'),
-    load: () => loadOwnerStations(),
+    // Policy rides along: the Selection section lives at the bottom of
+    // this panel, so its /policy/get lands on the same open.
+    load: () => Promise.all([loadOwnerStations(), loadPolicy()]),
     render: () => renderStationsPanel(),
+  },
+  taste: {
+    label: 'Taste',
+    visible: () => !!ownerKey() && capabilities.includes('taste'),
+    load: () => loadTaste(),
+    render: () => renderTastePanel(),
+  },
+  why: {
+    label: 'Why this track',
+    visible: () => !!ownerKey() && capabilities.includes('exclusions'),
+    load: () => loadWhy(),
+    render: () => renderWhyPanel(),
   },
 };
 
@@ -238,7 +253,8 @@ function renderStationsPanel() {
       ${panelNote ? `<p class="pnote" role="status">${escapeHtml(panelNote)}</p>` : ''}
       ${ownerStationsError ? `<p class="ferror" role="alert">${escapeHtml(ownerStationsError)}</p>` : ''}
       <button type="button" class="btn s-new">＋ New station</button>
-      <ul class="plist">${rows || (ownerStationsError ? '' : '<li class="hempty">No stations yet.</li>')}</ul>`;
+      <ul class="plist">${rows || (ownerStationsError ? '' : '<li class="hempty">No stations yet.</li>')}</ul>
+      ${policySectionHTML()}`;
   }
   $panel.innerHTML = panelChrome('Stations', body);
 }
@@ -286,6 +302,106 @@ async function toggleAutostart(id) {
     showPanelNote('Couldn’t reach the broadcaster');
   }
   renderStationsPanel();
+}
+
+// --- Selection policy (W4) --------------------------------------------
+
+// Global, all stations (settled scope). The wire is careful about one
+// thing above all: on /policy/set, a key that is ABSENT means "leave
+// alone" and an EXPLICIT null means "dial off" — null ≠ 0, which is an
+// active reorder. So every set sends exactly the keys the interaction
+// changed and nothing else; the -1 sentinel stays server-internal.
+//
+// mixSetMinimumDuration is deliberately control-free (it has no
+// persistence server-side): /policy/get reports it and the copy renders
+// it read-only.
+let policy = null;        // {newMusicShare, excludeMixSets, mixSetMinimumDuration}
+let policyError = null;
+// Where the dial re-arms when the checkbox comes back on — the last
+// non-null share we saw, so off→on restores rather than resets.
+let policyShareMemory = 0.3;
+
+function adoptPolicy(data) {
+  policy = {
+    newMusicShare: data.newMusicShare ?? null,
+    excludeMixSets: !!data.excludeMixSets,
+    mixSetMinimumDuration: data.mixSetMinimumDuration ?? null,
+  };
+  if (policy.newMusicShare != null) policyShareMemory = policy.newMusicShare;
+}
+
+async function loadPolicy() {
+  if (!ownerKey() || !capabilities.includes('policy')) return;
+  try {
+    const { ok, status, data } = await apiPost('/policy/get', { token: ownerKey() });
+    if (ok) {
+      adoptPolicy(data);
+      policyError = null;
+    } else {
+      policyError = friendlyError(status, data);
+    }
+  } catch {
+    policyError = 'Couldn’t reach the broadcaster';
+  }
+  if (activePanel === 'stations') renderStationsPanel();
+}
+
+// Optimistic set with reconcile: patch locally, POST only the changed
+// keys, adopt the server's authoritative echo on 2xx, revert on refusal.
+async function setPolicy(patch) {
+  if (!policy) return;
+  const prev = { ...policy };
+  Object.assign(policy, patch);
+  if (policy.newMusicShare != null) policyShareMemory = policy.newMusicShare;
+  renderStationsPanel();
+  try {
+    // Object spread keeps patch's explicit nulls; keys not in patch are
+    // genuinely absent from the JSON — the absent-vs-null distinction
+    // the server decodes with a double optional.
+    const { ok, status, data } = await apiPost('/policy/set', { token: ownerKey(), ...patch });
+    if (ok) adoptPolicy(data);
+    else {
+      policy = prev;
+      showPanelNote(friendlyError(status, data));
+    }
+  } catch {
+    policy = prev;
+    showPanelNote('Couldn’t reach the broadcaster');
+  }
+  renderStationsPanel();
+}
+
+function policySectionHTML() {
+  if (!ownerKey() || !capabilities.includes('policy')) return '';
+  let inner;
+  if (!policy) {
+    inner = policyError
+      ? `<p class="ferror" role="alert">${escapeHtml(policyError)}</p>`
+      : '<p class="pnote">Loading…</p>';
+  } else {
+    const on = policy.newMusicShare != null;
+    const pct = Math.round((on ? policy.newMusicShare : policyShareMemory) * 100);
+    const minDur = policy.mixSetMinimumDuration;
+    inner = `
+      <div class="field">
+        <label class="check"><input type="checkbox" class="pol-share-on"${on ? ' checked' : ''}>
+          Prefer a share of new music</label>
+        <div class="frow">
+          <input type="range" class="pol-share" min="0" max="100" value="${pct}"${on ? '' : ' disabled'}>
+          <span class="pol-share-label">${on ? `${pct}%` : 'off'}</span>
+        </div>
+        <p class="fhint">“New” means an artist not in your library.</p>
+      </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" class="pol-mixsets"${policy.excludeMixSets ? ' checked' : ''}>
+          Skip long mix sets</label>
+        ${minDur != null
+          ? `<p class="fhint">A mix set is anything longer than ${escapeHtml(fmtSpan(minDur))}.</p>` : ''}
+      </div>
+      <p class="fhint">Applies to every station at its next pool refill — no restart.</p>
+      ${policyError ? `<p class="ferror" role="alert">${escapeHtml(policyError)}</p>` : ''}`;
+  }
+  return `<div class="psec pol"><h3>Selection</h3>${inner}</div>`;
 }
 
 // --- Delete (typed-name confirm) -------------------------------------
@@ -630,6 +746,210 @@ function removeRegion(code) {
   renderStationsPanel();
 }
 
+// --- Taste panel (W5) -------------------------------------------------
+
+// Text-only transparency: the taste profile's top artists/tags with
+// scores as dotted-leader rows (a bar of text, not a chart), then each
+// station's signal counts and top affinity artists. Fetched on open,
+// never polled — taste moves at the speed of ♥, not of seconds.
+let taste = null;
+let tasteError = null;
+
+async function loadTaste() {
+  try {
+    const { ok, status, data } = await apiPost('/taste', { token: ownerKey() });
+    if (ok) {
+      taste = data;
+      tasteError = null;
+    } else {
+      tasteError = status === 503
+        ? briefMessage(data.message, 'catalogue unavailable')
+        : friendlyError(status, data);
+    }
+  } catch {
+    tasteError = 'Couldn’t reach the broadcaster';
+  }
+  if (activePanel === 'taste') renderTastePanel();
+}
+
+const scoreRowsHTML = (items, key) => (items || []).map((it) => `
+  <li class="srow">
+    <span class="sname">${escapeHtml(it[key])}</span>
+    <span class="sleader" aria-hidden="true"></span>
+    <span class="sscore">${Math.round((it.score || 0) * 100)}%</span>
+  </li>`).join('');
+
+function renderTastePanel() {
+  if (!$panel || activePanel !== 'taste') return;
+  let body;
+  if (!taste) {
+    body = tasteError
+      ? `<p class="ferror" role="alert">${escapeHtml(tasteError)}</p>`
+      : '<p class="pnote">Loading…</p>';
+  } else {
+    const stationRows = (taste.stations || []).map((s) => {
+      const c = s.counts || {};
+      const lean = (s.topAffinityArtists || []).join(', ');
+      return `
+      <li class="trow">
+        <span class="rname">${escapeHtml(s.name)}</span>
+        <span class="rmeta">${c.plays || 0} plays · ${c.saves || 0} saves · ${c.boosts || 0} boosts · ${c.skips || 0} skips</span>
+        ${lean ? `<span class="tlean">leaning ${escapeHtml(lean)}</span>` : ''}
+      </li>`;
+    }).join('');
+    body = `
+      ${tasteError ? `<p class="ferror" role="alert">${escapeHtml(tasteError)}</p>` : ''}
+      <div class="psec"><h3>Top artists</h3>
+        <ul class="slist">${scoreRowsHTML(taste.libraryArtists, 'artist')
+          || '<li class="hempty">Nothing yet — ♥ some tracks.</li>'}</ul></div>
+      <div class="psec"><h3>Top tags</h3>
+        <ul class="slist">${scoreRowsHTML(taste.libraryTags, 'tag')
+          || '<li class="hempty">Nothing yet.</li>'}</ul></div>
+      <div class="psec"><h3>Stations</h3>
+        <ul class="slist">${stationRows || '<li class="hempty">No stations.</li>'}</ul></div>`;
+  }
+  $panel.innerHTML = panelChrome('Taste', body);
+}
+
+// --- Why-this-track panel (W5) ----------------------------------------
+
+// The selection filters' audit trail: HistoryStore's exclusion rows,
+// each rendered as one human sentence. enforced:false rows are the
+// mix-set filter's shadow log — "would remove", logged but let through,
+// exactly the preview the toggle's ship-dark design intended; the label
+// flips to "removed" once the filter is on.
+let exclRows = [];
+let exclStationFilter = null; // stationID (UUID string), null = all stations
+let exclLimit = 100;
+let exclDone = false;
+let exclLoading = false;
+let exclError = null;
+// Station IDs seen across fetches this panel session — a filtered fetch
+// returns one station's rows, so the chip set must not collapse to it.
+const exclStationIDs = new Set();
+
+const EXCL_PAGE = 100;
+const EXCL_CAP = 500; // matches the server clamp
+
+// "2h02m" for hour-plus mixes, "62m" below — the sentence reads like a
+// person describing a mix, not a duration column.
+function fmtMixDur(secs) {
+  const s = Math.max(0, Math.floor(secs));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+
+function exclusionSentence(r) {
+  const verb = r.enforced ? 'removed' : 'would remove';
+  let detail = '';
+  if (r.arm === 'duration' && r.durationSeconds != null) {
+    detail = ` (${fmtMixDur(r.durationSeconds)} mix)`;
+  } else if (r.matchedText) {
+    detail = ` (title matched “${r.matchedText}”)`;
+  }
+  return `${verb}: ${r.artist} — ${r.title}${detail}`;
+}
+
+function stationNameFor(sid) {
+  const s = ownerStations.find((x) => x.id === sid);
+  return s ? s.name : '(deleted station)';
+}
+
+// Panel open: reset filter + paging, and fetch the owner station list
+// if the stations panel never loaded it — exclusion rows carry only
+// stationIDs, the names for the chips live in /stations/list.
+function loadWhy() {
+  exclStationFilter = null;
+  exclStationIDs.clear();
+  if (capabilities.includes('stations') && !ownerStations.length) {
+    loadOwnerStations().then(() => {
+      if (activePanel === 'why') renderWhyPanel();
+    });
+  }
+  return loadExclusions(true);
+}
+
+async function loadExclusions(reset) {
+  if (exclLoading) return;
+  if (reset) {
+    exclRows = [];
+    exclLimit = EXCL_PAGE;
+    exclDone = false;
+    exclError = null;
+  }
+  exclLoading = true;
+  if (activePanel === 'why') renderWhyPanel();
+  try {
+    // `station` rides as an explicit null when unfiltered — the wire's
+    // explicit-nulls discipline, same as the server's own payloads.
+    const { ok, status, data } = await apiPost('/exclusions',
+      { token: ownerKey(), station: exclStationFilter, limit: exclLimit });
+    if (ok) {
+      exclRows = data.exclusions || [];
+      exclRows.forEach((r) => { if (r.stationID) exclStationIDs.add(r.stationID); });
+      exclDone = exclRows.length < exclLimit || exclLimit >= EXCL_CAP;
+      exclError = null;
+    } else {
+      exclError = status === 503
+        ? briefMessage(data.message, 'catalogue unavailable')
+        : friendlyError(status, data);
+    }
+  } catch {
+    exclError = 'Couldn’t reach the broadcaster';
+  }
+  exclLoading = false;
+  if (activePanel === 'why') renderWhyPanel();
+}
+
+// The chips re-fetch server-side (the wire scopes by station) — unlike
+// history, whose filter narrows already-loaded rows client-side.
+function setExclusionFilter(sid) {
+  exclStationFilter = sid || null;
+  loadExclusions(true);
+}
+
+// This wire has no offset — "More" widens the limit and re-fetches from
+// the top (rows come newest-first and the cap is small), which reads
+// like history's paging without pretending the contract pages.
+function moreExclusions() {
+  if (exclDone || exclLoading) return;
+  exclLimit = Math.min(exclLimit + EXCL_PAGE, EXCL_CAP);
+  loadExclusions(false);
+}
+
+function whyFilterChips() {
+  if (exclStationIDs.size < 2) return '';
+  const chips = [...exclStationIDs].map((sid) =>
+    `<button type="button" class="chip x-filter${exclStationFilter === sid ? ' on' : ''}"
+      data-sid="${escapeHtml(sid)}">${escapeHtml(stationNameFor(sid))}</button>`).join('');
+  return `<div class="chips hfilters">
+    <button type="button" class="chip x-filter${!exclStationFilter ? ' on' : ''}" data-sid="">All</button>
+    ${chips}</div>`;
+}
+
+function renderWhyPanel() {
+  if (!$panel || activePanel !== 'why') return;
+  const rows = exclRows.map((r) => `
+    <li>
+      <span class="htime">${escapeHtml(fmtTime(r.lastExcludedAt))}</span>
+      <span class="htrack">${escapeHtml(exclusionSentence(r))}</span>
+      ${r.hitCount > 1 ? `<span class="xcount" title="Times this track came up">×${r.hitCount}</span>` : ''}
+      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
+    </li>`).join('');
+  const empty = exclError ? ''
+    : (exclLoading ? '<li class="hempty">Loading…</li>' : '<li class="hempty">Nothing filtered yet.</li>');
+  const more = !exclDone && exclRows.length
+    ? `<button type="button" class="btn x-more" ${exclLoading ? 'disabled' : ''}>More</button>`
+    : '';
+  $panel.innerHTML = panelChrome('Why this track', `
+    ${exclError ? `<p class="ferror" role="alert">${escapeHtml(exclError)}</p>` : ''}
+    <p class="fhint">Tracks the selection filters caught. “would remove” rows are the mix-set filter running in shadow — logged, not enforced.</p>
+    ${whyFilterChips()}
+    <ul class="hlist">${rows || empty}</ul>
+    ${more}`);
+}
+
 // --- Play history panel -----------------------------------------------
 
 // The DB-backed log, not the 5-track ring on the cards. Moved here from
@@ -741,6 +1061,9 @@ function onPanelClick(e) {
     historyFilter = btn.dataset.sid || null;
     return renderHistoryPanel();
   }
+  // Why-this-track
+  if (btn.classList.contains('x-more')) return void moreExclusions();
+  if (btn.classList.contains('x-filter')) return void setExclusionFilter(btn.dataset.sid);
   // Stations list
   if (btn.classList.contains('s-new')) return newStationFlow();
   if (btn.classList.contains('s-startstop') && row) return void startStopStation(row.dataset.id);
@@ -766,8 +1089,16 @@ function onPanelClick(e) {
 // keystroke would drop focus); structural changes (chips, selects)
 // re-render from state.
 function onPanelInput(e) {
-  if (!editor) return;
   const t = e.target;
+  // Policy dial: drag patches the % label in place (a re-render would
+  // drop the drag); the commit happens on `change`.
+  if (t.classList.contains('pol-share')) {
+    const label = typeof $panel.querySelector === 'function'
+      ? $panel.querySelector('.pol-share-label') : null;
+    if (label) label.textContent = `${t.value}%`;
+    return;
+  }
+  if (!editor) return;
   if (t.classList.contains('f-name')) editor.name = t.value;
   if (t.classList.contains('f-yearmin')) editor.yearMin = t.value ? Number(t.value) : null;
   if (t.classList.contains('f-yearmax')) editor.yearMax = t.value ? Number(t.value) : null;
@@ -784,6 +1115,18 @@ function onPanelChange(e) {
   const t = e.target;
   const row = t.closest('.row');
   if (t.classList.contains('s-auto') && row) return void toggleAutostart(row.dataset.id);
+  // Selection policy — each control sends only its own key, so an
+  // untouched dial never rides along on a mix-set toggle (absent =
+  // leave alone) and unchecking the dial sends an explicit null (off).
+  if (t.classList.contains('pol-share-on')) {
+    return void setPolicy({ newMusicShare: t.checked ? policyShareMemory : null });
+  }
+  if (t.classList.contains('pol-share')) {
+    return void setPolicy({ newMusicShare: Number(t.value) / 100 });
+  }
+  if (t.classList.contains('pol-mixsets')) {
+    return void setPolicy({ excludeMixSets: t.checked });
+  }
   if (!editor) return;
   if (t.classList.contains('f-kind')) {
     editor.kind = t.value;
