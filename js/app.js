@@ -241,11 +241,16 @@ function render() {
     // ignored. Album and progress are quiet second-order lines; the
     // progress span's text is re-patched every second by the tick above.
     const progress = active && t ? progressText(s.id) : '';
+    // The album is a second-order fact — say so: "from <album>", the
+    // "from" muted. Suppressed when empty or when it repeats the title
+    // (a self-titled release used to make three near-identical lines).
+    const albumShown = t && t.album
+      && String(t.album).trim().toLowerCase() !== String(t.title ?? '').trim().toLowerCase();
     const now = isLoading
       ? `<span class="status">Connecting…</span>`
       : t
         ? `<b class="title">${escapeHtml(t.title)}</b><span class="artist">${escapeHtml(t.artist)}</span>`
-          + (t.album ? `<span class="album">${escapeHtml(t.album)}</span>` : '')
+          + (albumShown ? `<span class="album"><span class="from">from</span> ${escapeHtml(t.album)}</span>` : '')
           + (progress ? `<span class="progress" data-station="${escapeHtml(s.id)}">${progress}</span>` : '')
         : `<span class="status">Live</span>`;
     const classes = [
@@ -265,21 +270,22 @@ function render() {
     // one being heard. Share is for everyone: guests spreading the radio
     // is the point.
     const disabled = actionBusy.has(s.id) || !shown.settled ? 'disabled' : '';
+    const likeLabel = liked ? 'Remove from library' : 'Save to library';
     const ownerActions = ownerKey()
       ? `<button type="button" class="act act--like${liked ? ' liked' : ''}"
-          aria-label="${liked ? 'Un-save (remove from library)' : 'Save to library'}" ${disabled}>
+          title="${likeLabel}" aria-label="${likeLabel}" ${disabled}>
           ${liked ? ICON_HEART_FILLED : ICON_HEART}
         </button>
         <button type="button" class="act act--boost"
-          aria-label="More like this — steer the station" ${disabled}>
+          title="More like this" aria-label="More like this" ${disabled}>
           ${ICON_BOOST}
         </button>
         <button type="button" class="act act--skip"
-          aria-label="Dislike and skip this track" ${disabled}>
+          title="Less like this" aria-label="Less like this" ${disabled}>
           ${ICON_THUMBSDOWN}
         </button>
         <button type="button" class="act act--next"
-          aria-label="Next track" ${disabled}>
+          title="Skip track" aria-label="Skip track" ${disabled}>
           ${ICON_NEXT}
         </button>`
       : '';
@@ -289,7 +295,7 @@ function render() {
     const actions = t
       ? `<span class="actions">
           ${active ? ownerActions : ''}
-          <button type="button" class="act act--share" aria-label="Share this track">
+          <button type="button" class="act act--share" title="Share this track" aria-label="Share this track">
             ${ICON_SHARE}
           </button>
           ${note
@@ -315,10 +321,13 @@ function render() {
         <li>
           ${r.playedAt ? `<span class="ttime">${escapeHtml(fmtTime(r.playedAt))}</span>` : ''}
           ${ownerKey()
-            ? `<button type="button" class="act act--retro" data-entry="${escapeHtml(r.entryID)}" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
+            ? `<button type="button" class="act act--retro" data-entry="${escapeHtml(r.entryID)}" title="Save to library" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
             : ''}
           <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
           ${links(r)}
+          ${capabilities.includes('trackinfo') && r.entryID
+            ? `<button type="button" class="tlink about-link" data-entry="${escapeHtml(r.entryID)}" aria-label="About ${escapeHtml(r.artist)} — ${escapeHtml(r.title)}">about</button>`
+            : ''}
         </li>`).join('');
     const timeline = active && (s.nextTrack || recentRows)
       ? `<div class="timeline">
@@ -332,15 +341,29 @@ function render() {
     const origin = t && t.origin
       ? `<span class="origin">${escapeHtml(ORIGIN_LABELS[t.origin] || t.origin)}</span>`
       : '';
-    const nowLinks = active && t && (origin || t.sourceURL || t.youtubeURL)
-      ? `<span class="nowlinks">${origin}${links(t)}</span>`
+    // "About this track" rides the provenance row — public on purpose
+    // (guests get to learn about the track too), shown only when the
+    // server advertises the trackinfo capability.
+    const aboutBtn = t && capabilities.includes('trackinfo')
+      ? `<button type="button" class="tlink about-link" aria-label="About ${escapeHtml(t.artist)} — ${escapeHtml(t.title)}">about</button>`
+      : '';
+    // The origin badge is provenance and renders on EVERY card with a
+    // track — a guest scanning the grid gets to see where each channel
+    // sources from. Links and "about" stay on the active card: you dig
+    // into what you're hearing.
+    const nowLinks = t && (origin || (active && (t.sourceURL || t.youtubeURL || aboutBtn)))
+      ? `<span class="nowlinks">${origin}${active ? links(t) + aboutBtn : ''}</span>`
       : '';
     // ✎ opens the station editor — never inline UI on the card. The
     // grid stays a radio; management lives in the panel, and the button
     // only exists once the server advertises the CRUD capability.
     const editBtn = ownerKey() && capabilities.includes('stations')
-      ? `<button type="button" class="act act--edit" aria-label="Edit ${escapeHtml(s.name)}">✎</button>`
+      ? `<button type="button" class="act act--edit" title="Edit station" aria-label="Edit station">✎</button>`
       : '';
+    // Quiet affordance for guests: only cards you are NOT tuned into
+    // say how to engage. Connecting/buffering cards ARE the active card,
+    // so they never carry it.
+    const hint = active ? '' : '<div class="hint">tap to listen</div>';
     return `
       <div role="button" tabindex="0"
         class="${classes}"
@@ -354,13 +377,20 @@ function render() {
           ${editBtn}
         </div>
         <div class="now">${now}${nowLinks}</div>
+        ${hint}
         ${timeline}
         <div class="foot">
           ${actions}
-          <span class="transport">${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}</span>
+          <span class="transport" title="${isPlaying ? 'Pause' : 'Play'}"
+            aria-label="${isPlaying ? 'Pause' : 'Play'}">${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}</span>
         </div>
       </div>`;
   }).join('');
+  // The about panel follows what the card SHOWS (the display-lagged
+  // track, not the server's) — poke panels.js after every paint so it
+  // can refetch when the shown track settles onto a new one. Guarded:
+  // render() can fire before panels.js has evaluated.
+  if (typeof onShownTrackChange === 'function') onShownTrackChange();
 }
 
 $stations.addEventListener('click', (e) => {
@@ -368,6 +398,15 @@ $stations.addEventListener('click', (e) => {
   if (e.target.closest('a')) return;
   const card = e.target.closest('.station');
   if (!card) return;
+  // "About this track" — a text affordance, not an action; opens the
+  // public info panel (defined in panels.js, guarded: load order).
+  const about = e.target.closest('.about-link');
+  if (about) {
+    if (typeof openAboutPanel === 'function') {
+      openAboutPanel(card.dataset.id, about.dataset.entry || null);
+    }
+    return;
+  }
   const act = e.target.closest('.act');
   if (act) {
     if (act.classList.contains('act--share')) {
@@ -453,6 +492,19 @@ async function apiPost(path, body, ms = 8000) {
     syncLock();
     render();
   }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// Public JSON GETs (trackinfo) — the same timeout and JSON dance as
+// apiPost, but no token and no body: the routes it serves are public.
+// Throws on network error / timeout so callers can tell "broadcaster
+// said no" from "couldn't ask", same as apiPost.
+async function apiGet(path, ms = 8000) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    cache: 'no-store',
+    signal: timeoutSignal(ms),
+  });
+  const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -800,7 +852,9 @@ function syncLock() {
   const on = !!ownerKey();
   if ($lock) {
     $lock.textContent = on ? '🔓' : '🔒';
-    $lock.setAttribute('aria-label', on ? 'Owner mode on — tap to log out' : 'Owner login');
+    const lockLabel = on ? 'Owner menu' : 'Owner login';
+    $lock.setAttribute('aria-label', lockLabel);
+    $lock.setAttribute('title', lockLabel);
     $lock.classList.toggle('on', on);
   }
   // Panels gate owner-only UI on the same signal — poke panels.js when
