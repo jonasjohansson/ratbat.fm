@@ -143,6 +143,8 @@ function boot(opts = {}) {
   moreExclusions, setExclusionFilter, exclusionSentence, fmtMixDur,
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
+  get vocab() { return vocab; },
+  set vocab(v) { vocab = v; },
   get ownerStations() { return ownerStations; },
   set ownerStations(v) { ownerStations = v; },
   get historyRows() { return historyRows; },
@@ -917,6 +919,125 @@ test('why: station chips re-fetch server-side; More widens the limit (no offset 
   await settle();
   assert.deepStrictEqual(wire(bodies[2]), { token: 'valid', station: 's2', limit: 200 });
   assert.strictEqual(t.exclRows.length, 200, 'widened fetch replaces, not appends');
+});
+
+// --- Library Radio (W6) -----------------------------------------------
+
+// /vocab as the v3 (S4) server ships it — libraryRadio in `kinds` is
+// the capability signal the editor gates on.
+const V3_VOCAB = {
+  tags: { nts: ['dub'], lastFM: ['dub'], bandcamp: ['dub'], libraryRadio: [] },
+  tagMatch: ['any', 'all'],
+  popularity: ['hits', 'middle', 'deepCuts'],
+  bandcampSort: ['date', 'pop'],
+  kinds: ['nts', 'lastFM', 'bandcamp', 'libraryRadio'],
+  regions: ['JP'],
+};
+// Same server one deploy earlier: no libraryRadio anywhere.
+const V2_VOCAB = {
+  ...V3_VOCAB,
+  tags: { nts: ['dub'], lastFM: ['dub'], bandcamp: ['dub'] },
+  kinds: ['nts', 'lastFM', 'bandcamp'],
+};
+
+// A /stations/list libraryRadio station — flat contract, query present,
+// exploration/sort null (wrongKind), excludeOwnedLibrary normalized off.
+const srvLibrary = {
+  id: '33333333-3333-3333-3333-333333333333',
+  name: 'Home Radio', slug: 'home-radio', kind: 'libraryRadio',
+  broadcasting: false, autoStart: false,
+  query: {
+    genreTags: [], yearMin: null, yearMax: null,
+    regions: [], tagMatch: 'any', popularity: 'middle',
+    excludeOwnedLibrary: false, excludedArtists: [],
+  },
+  exploration: null, sort: null, shufflePool: true, trackCount: null,
+};
+
+test('libraryRadio: kind picker offered only when vocab.kinds includes it', async () => {
+  const { t, els } = ownerBoot();
+  await settle();
+  await t.openPanel('stations');
+  // v2 server: the kind never appears — its create would 422.
+  t.vocab = V2_VOCAB;
+  t.editor = t.newEditor('nts');
+  t.renderStationsPanel();
+  assert.ok(!els.panel.innerHTML.includes('libraryRadio'), 'v2 vocab: not offered');
+  // v3 server: offered, labeled "Library radio".
+  t.vocab = V3_VOCAB;
+  t.renderStationsPanel();
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('value="libraryRadio"'), 'v3 vocab: option present');
+  assert.ok(html.includes('>Library radio<'), 'labeled');
+});
+
+test('libraryRadio: editor shows query + shuffle only — no exploration, no sort, no exclude-owned', async () => {
+  const { t, els } = ownerBoot();
+  await settle();
+  await t.openPanel('stations');
+  t.vocab = V3_VOCAB;
+  t.editor = t.newEditor('libraryRadio');
+  t.renderStationsPanel();
+  const html = els.panel.innerHTML;
+  assert.ok(!html.includes('f-exploration'), 'no exploration slider');
+  assert.ok(!html.includes('f-sort'), 'no sort select');
+  assert.ok(!html.includes('f-excludeowned'), 'no exclude-owned checkbox');
+  assert.ok(html.includes('plays only tracks you own'), 'copy note explains why');
+  assert.ok(html.includes('f-shuffle'), 'shuffle stays');
+  assert.ok(html.includes('f-newtag'), 'query facets stay editable');
+});
+
+test('libraryRadio: create body is contract-exact — no exploration/sort keys, exclude-owned normalized', async () => {
+  const { t } = ownerBoot();
+  await settle();
+  const ed = t.newEditor('libraryRadio');
+  ed.name = ' Home Radio ';
+  // Stale checkbox state from a kind switch in the picker — must never
+  // reach the wire as true: library radio plays only owned tracks.
+  ed.excludeOwnedLibrary = true;
+  assert.strictEqual(t.validateEditor(ed), null, 'empty tags = whole library, valid');
+  assert.deepStrictEqual(wire(t.buildStationBody(ed)), {
+    token: 'valid',
+    kind: 'libraryRadio',
+    name: 'Home Radio',
+    query: {
+      genreTags: [], yearMin: null, yearMax: null, regions: [],
+      tagMatch: 'any', popularity: 'middle',
+      excludeOwnedLibrary: false, excludedArtists: [],
+    },
+    shufflePool: false,
+  });
+});
+
+test('libraryRadio: list payload round-trips into an update body of name/query/shufflePool', async () => {
+  const { t } = ownerBoot();
+  await settle();
+  const ed = t.editorFrom(srvLibrary);
+  assert.deepStrictEqual(wire(t.buildStationBody(ed, false)), {
+    token: 'valid',
+    station: srvLibrary.id,
+    applyNow: false,
+    name: 'Home Radio',
+    query: srvLibrary.query,
+    shufflePool: true,          // and nothing else — exploration/sort stay wrongKind
+  });
+});
+
+test('libraryRadio: stations-panel badge and now-playing origin badge', async () => {
+  const { t, els } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [srvLibrary] } }),
+  });
+  await settle();
+  await t.openPanel('stations');
+  const html = els.panel.innerHTML;
+  assert.ok(html.includes('>Library radio<'), 'kind badge labeled');
+  assert.ok(html.includes('s-edit') && html.includes('s-delete'),
+    'libraryRadio rows are editable, unlike playlist');
+  // Origin "library" on the active card maps through ORIGIN_LABELS.
+  t.closePanel();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, origin: 'library' }));
+  assert.ok(els.stations.innerHTML.includes('>Library<'), 'origin badge mapped');
 });
 
 // --- Go ---------------------------------------------------------------

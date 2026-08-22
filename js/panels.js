@@ -23,7 +23,7 @@ const $dlg = document.getElementById('dlg');
 
 const KIND_LABELS = {
   nts: 'NTS', lastFM: 'Last.fm', bandcamp: 'Bandcamp',
-  playlist: 'Playlist', libraryRadio: 'Library Radio',
+  playlist: 'Playlist', libraryRadio: 'Library radio',
 };
 const POPULARITY_LABELS = { hits: 'Hits', middle: 'Middle', deepCuts: 'Deep cuts' };
 const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
@@ -525,7 +525,11 @@ function buildQuery(ed) {
     regions: ed.regions.slice(),
     tagMatch: ed.tagMatch,
     popularity: ed.popularity,
-    excludeOwnedLibrary: !!ed.excludeOwnedLibrary,
+    // Library radio plays ONLY owned tracks, so excludeOwnedLibrary is
+    // meaningless there — the server ignores/normalizes it, and the
+    // client sends the normalized value so a kind switched in the
+    // picker never smuggles a stale checkbox onto the wire.
+    excludeOwnedLibrary: ed.kind === 'libraryRadio' ? false : !!ed.excludeOwnedLibrary,
     excludedArtists: (ed.excludedArtists || []).slice(),
   };
 }
@@ -539,7 +543,9 @@ function buildStationBody(ed, applyNow) {
   };
   // Kind-scoped knobs are sent only where they mean something — the
   // server rejects exploration on non-Last.fm (wrongKind), so an
-  // always-sent null would be an error, not a no-op.
+  // always-sent null would be an error, not a no-op. libraryRadio
+  // deliberately has neither branch: its whole body is
+  // name + query + shufflePool, and exploration/sort stay wrongKind.
   if (ed.kind === 'lastFM') body.exploration = Number(ed.exploration);
   if (ed.kind === 'bandcamp') body.sort = ed.sort;
   if (ed.mode === 'create') {
@@ -557,7 +563,11 @@ function buildStationBody(ed, applyNow) {
 // not typos.
 function validateEditor(ed) {
   if (!ed.name.trim()) return 'Name the station';
-  if (!ed.tags.length) return 'Pick at least one tag';
+  // Library radio facets over the OWNED library, where empty tags mean
+  // "everything I own" — the primary use. Blocking it client-side would
+  // forbid the whole-library station; if the server still 422s, its
+  // specific message surfaces through submitEditor.
+  if (!ed.tags.length && ed.kind !== 'libraryRadio') return 'Pick at least one tag';
   if (ed.yearMin != null && ed.yearMax != null && ed.yearMin > ed.yearMax) {
     return 'Year range is inside out';
   }
@@ -632,6 +642,10 @@ async function submitEditor(applyNow) {
 }
 
 function editorHTML(ed) {
+  // vocab.kinds doubles as the capability signal for what THIS server
+  // can create — libraryRadio is deliberately absent from the fallback,
+  // so a v2 server (or no vocab at all) never offers a kind whose
+  // create would 422 as "unknown kind".
   const kinds = (vocab && vocab.kinds) || ['nts', 'lastFM', 'bandcamp'];
   const palette = (vocab && vocab.tags && vocab.tags[ed.kind]) || [];
   // Palette first, then any selected tags the palette doesn't know —
@@ -705,7 +719,12 @@ function editorHTML(ed) {
     </select></div>` : ''}
     <div class="field">
       <label class="check"><input type="checkbox" class="f-shuffle"${ed.shufflePool ? ' checked' : ''}> Shuffle the pool</label>
-      <label class="check"><input type="checkbox" class="f-excludeowned"${ed.excludeOwnedLibrary ? ' checked' : ''}> Only music I don’t own</label>
+      ${ed.kind === 'libraryRadio'
+        // excludeOwnedLibrary is meaningless here (buildQuery sends it
+        // normalized to false) — say why the checkbox is gone instead
+        // of leaving a silent hole in the form.
+        ? '<p class="fhint">Library radio plays only tracks you own.</p>'
+        : `<label class="check"><input type="checkbox" class="f-excludeowned"${ed.excludeOwnedLibrary ? ' checked' : ''}> Only music I don’t own</label>`}
     </div>
     ${ed.error ? `<p class="ferror" role="alert">${escapeHtml(ed.error)}</p>` : ''}
     <div class="frow">

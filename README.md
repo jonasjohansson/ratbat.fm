@@ -8,9 +8,23 @@ Static web frontend for **Ratbat**, a personal radio broadcasting app.
 
 ## What this is
 
-HTML/CSS/JS only. Hosted on GitHub Pages. Polls the Ratbat broadcaster's `/now.json` to show what's playing; audio streams directly from the broadcaster's HTTPS endpoint.
+HTML/CSS/JS only — no build step, no framework. Hosted on GitHub Pages. Live now-playing via the broadcaster's SSE `/events` stream (falling back to polling `/now.json`); audio streams directly from the broadcaster's HTTPS endpoint. A persistent play-history panel reads `/history`.
 
 When the Mac app is broadcasting, this page shows live stations. When it's not, "Broadcaster offline".
+
+### Owner mode
+
+The lock button logs in with the broadcaster's owner passcode (validated against `POST /auth`, stored locally). A logged-in owner gets, on top of the listener actions (♥ / skip / next / boost):
+
+- **Station editor** — create, edit, start, stop, auto-start, and delete stations (NTS / Last.fm / Bandcamp, plus Library Radio when the backend advertises it in `vocab.kinds`) from the browser; forms are built from the server's `/vocab` so tag palettes and options never go stale.
+- **Selection controls** — the global new-music share dial and mix-set filter (`/policy`).
+- **Taste panel** — what the selection pipeline believes about your taste (`/taste`).
+- **Why-this-track** — the mix-set filter's audit trail, shadow rows included (`/exclusions`).
+- A health strip (on-air / uptime / most recent gap) from `/health`.
+
+### Feature detection
+
+The site feature-detects against the backend via `GET /health`: the server advertises a `capabilities` array (`stations`, `policy`, `taste`, `exclusions`, …) and each owner panel renders only when its capability is present. Against an older backend (or when `/health` 404s) the page degrades to the plain listener experience — deploys of site and backend never need to be coordinated. The API is documented in the Mac app repo's `docs/http-api.md`.
 
 Domain `ratbat.fm` aspirational for future.
 
