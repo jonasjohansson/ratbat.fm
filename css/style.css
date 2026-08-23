@@ -179,6 +179,44 @@ main {
 .station .now .album .from {
   opacity: 0.65;
 }
+
+/* What's known about the track on air, written onto the station itself.
+   Quiet by construction: the same muted ink as the album line, a narrow
+   measure so the bio reads as a paragraph and not a wall. */
+.station .trackinfo {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.35rem;
+  justify-items: center;
+  max-width: 42ch;
+  margin-inline: auto;
+  color: var(--muted);
+  font-size: clamp(0.72rem, 1.5vmin, 0.85rem);
+  line-height: 1.5;
+  text-align: center;
+}
+.station .trackinfo .tibio { opacity: 0.9; }
+.station .trackinfo .titags,
+.station .trackinfo .tisim { opacity: 0.75; }
+
+/* The "add a station" card: the shape you are about to create, in the
+   place it will appear. Dashed and accent-free so it reads as an empty
+   slot rather than a station that happens to be silent. */
+.station--new {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+  align-content: center;
+  justify-items: center;
+}
+.station--new .now { display: grid; gap: 0.4rem; justify-items: center; }
+.station--new .newplus { font-size: clamp(1.6rem, 4vmin, 2.4rem); line-height: 1; }
+.station--new .newlabel { font-size: clamp(0.8rem, 1.8vmin, 1rem); }
+.station--new:hover, .station--new:focus-visible {
+  border-color: var(--fg);
+  color: var(--fg);
+}
 /* Textual progress — deliberately a clock, not a bar. */
 .station .now .progress {
   font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
@@ -619,7 +657,6 @@ dialog input:focus-visible,
 }
 #panel .tlean { flex-basis: 100%; color: var(--muted); font-style: italic; }
 /* About-this-track — plain paragraphs, same ink as everything else. */
-#panel .atitle { margin: 0 0 0.3rem; }
 #panel .alinks {
   display: flex;
   align-items: center;

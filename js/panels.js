@@ -29,17 +29,6 @@ const KIND_LABELS = {
 const POPULARITY_LABELS = { hits: 'Hits', middle: 'Middle', deepCuts: 'Deep cuts' };
 const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
 
-// Region names are localized in the browser — the wire carries bare ISO
-// codes (the server serves Locale.Region.isoRegions) and
-// Intl.DisplayNames turns "JP" into "Japan" in the viewer's own
-// language. Fallback to the raw code where the API is missing.
-const regionName = (() => {
-  try {
-    const dn = new Intl.DisplayNames(undefined, { type: 'region' });
-    return (code) => { try { return dn.of(code) || code; } catch { return code; } };
-  } catch { return (code) => code; }
-})();
-
 // --- Panel framework --------------------------------------------------
 
 let activePanel = null;
@@ -71,16 +60,6 @@ const PANELS = {
     visible: () => !!ownerKey() && capabilities.includes('taste'),
     load: () => loadTaste(),
     render: () => renderTastePanel(),
-  },
-  about: {
-    label: 'About this track',
-    // Public — guests get to learn about the track too. No bar button
-    // (inBar): the panel is track-contextual, opened from the card's
-    // "about" link, and a bar button with no track would be noise.
-    inBar: false,
-    visible: () => capabilities.includes('trackinfo'),
-    load: () => loadTrackInfo(),
-    render: () => renderAboutPanel(),
   },
 };
 
@@ -602,6 +581,13 @@ function editStationRow(id) {
   renderStationsPanel();
 }
 
+// Entry points for the grid (app.js calls these, guarded): the ghost
+// card opens the stations panel straight into a blank editor.
+async function openNewStationFlow() {
+  await openPanel('stations');
+  newStationFlow();
+}
+
 // Entry point for the grid's per-card ✎ (app.js calls this, guarded).
 async function openStationEditorById(id) {
   await openPanel('stations');
@@ -838,156 +824,6 @@ function renderTastePanel() {
         <ul class="slist">${stationRows || '<li class="hempty">No stations.</li>'}</ul></div>`;
   }
   $panel.innerHTML = panelChrome('Taste', body);
-}
-
-// --- About-this-track panel -------------------------------------------
-
-// Public enrichment for the track on a card — who made it, when, what
-// else is worth knowing. GET /trackinfo needs no token; a keyless
-// broadcaster answers with mostly nulls and the panel still shows the
-// card's own facts (artist/title/origin/links) plus a quiet "no further
-// info" line, so it never looks broken.
-let aboutStation = null;  // station id the panel was opened from
-let aboutEntry = null;    // recent-row entryID, null = the now-playing track
-let aboutTrack = null;    // card-side track data captured at open time
-let aboutData = null;     // /trackinfo payload, null until it lands
-let aboutError = null;
-let aboutLoading = false;
-// Enrichment moves at the speed of discographies, not seconds — cache
-// by artist+title so reopening the panel on the same track never
-// refetches. Page-lifetime only, like everything else here.
-const trackinfoCache = new Map();
-
-// "1.2M", "45.3K" — listeners/playcounts compacted to a glance.
-function fmtCount(n) {
-  if (n == null || isNaN(n)) return '';
-  const one = (x) => {
-    const s = x.toFixed(1);
-    return s.endsWith('.0') ? s.slice(0, -2) : s;
-  };
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return `${one(n / 1e9)}B`;
-  if (abs >= 1e6) return `${one(n / 1e6)}M`;
-  if (abs >= 1e3) return `${one(n / 1e3)}K`;
-  return String(n);
-}
-
-// The card's own data for what the panel is about: a recent row looked
-// up by entryID, or the display-lagged shown track — what's being
-// HEARD, the same choice openTrack makes.
-function aboutTrackFor(stationId, entryId) {
-  const s = stations.find((x) => x.id === stationId);
-  if (!s) return null;
-  if (entryId) return (s.recent || []).find((r) => r.entryID === entryId) || null;
-  return (displayState.get(stationId) || {}).shownTrack || s.currentTrack || null;
-}
-
-// Entry point for the cards' "about" links (app.js calls this, guarded).
-function openAboutPanel(stationId, entryId) {
-  aboutStation = stationId;
-  aboutEntry = entryId || null;
-  aboutTrack = aboutTrackFor(stationId, aboutEntry);
-  aboutData = null;
-  aboutError = null;
-  openPanel('about');
-}
-
-async function loadTrackInfo() {
-  const t = aboutTrack;
-  if (!t) return;
-  const key = `${t.artist}|${t.title}`;
-  if (trackinfoCache.has(key)) {
-    aboutData = trackinfoCache.get(key);
-    aboutError = null;
-    return;
-  }
-  aboutLoading = true;
-  if (activePanel === 'about') renderAboutPanel();
-  try {
-    const q = aboutEntry ? `&entry=${encodeURIComponent(aboutEntry)}` : '';
-    const { ok, status, data } =
-      await apiGet(`/trackinfo?station=${encodeURIComponent(aboutStation)}${q}`);
-    if (ok) {
-      aboutData = data;
-      trackinfoCache.set(key, data);
-      aboutError = null;
-    } else {
-      aboutError = friendlyError(status, data);
-    }
-  } catch {
-    aboutError = 'Couldn’t reach the broadcaster';
-  }
-  aboutLoading = false;
-  if (activePanel === 'about') renderAboutPanel();
-}
-
-function renderAboutPanel() {
-  if (!$panel || activePanel !== 'about') return;
-  const t = aboutTrack;
-  if (!t) {
-    $panel.innerHTML = panelChrome('About this track', '<p class="pnote">Nothing playing.</p>');
-    return;
-  }
-  // The card's own facts render regardless of enrichment.
-  const head = `<p class="atitle"><b>${escapeHtml(t.artist)}</b> — ${escapeHtml(t.title)}</p>`;
-  const cardLinks = [
-    t.origin ? `<span class="badge">${escapeHtml(ORIGIN_LABELS[t.origin] || t.origin)}</span>` : '',
-    t.sourceURL ? `<a class="tlink" href="${escapeHtml(t.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
-    t.youtubeURL ? `<a class="tlink" href="${escapeHtml(t.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
-  ].filter(Boolean).join('');
-  // Everything below is explicit-null tolerant: each row assembles from
-  // the fields that are actually there and is omitted entirely when
-  // none are — no "null · null" lines, ever.
-  const a = (aboutData && aboutData.artist) || {};
-  const tr = (aboutData && aboutData.track) || {};
-  const facts = [];
-  const place = [a.city, a.country ? regionName(a.country) : null].filter(Boolean).join(', ');
-  if (place) facts.push(place);
-  if (a.firstReleaseYear != null) facts.push(`first release ${a.firstReleaseYear}`);
-  if (a.listeners != null) facts.push(`${fmtCount(a.listeners)} listeners`);
-  else if (a.playcount != null) facts.push(`${fmtCount(a.playcount)} plays`);
-  const tags = (a.tags || []).filter(Boolean).join(', ');
-  const similar = (a.similar || []).filter(Boolean).join(', ');
-  const trFacts = [];
-  if (tr.album) trFacts.push(tr.album);
-  if (tr.year != null) trFacts.push(String(tr.year));
-  if (tr.playcount != null) trFacts.push(`${fmtCount(tr.playcount)} plays`);
-  const sections = [];
-  if (facts.length) sections.push(`<p class="afacts">${escapeHtml(facts.join(' · '))}</p>`);
-  if (a.bio) sections.push(`<p class="abio">${escapeHtml(a.bio)}</p>`);
-  if (tags) sections.push(`<p class="atags">${escapeHtml(tags)}</p>`);
-  if (similar) sections.push(`<p class="atags">Similar: ${escapeHtml(similar)}</p>`);
-  if (trFacts.length || tr.wiki) {
-    sections.push(`<div class="psec"><h3>This track</h3>
-      ${trFacts.length ? `<p class="afacts">${escapeHtml(trFacts.join(' · '))}</p>` : ''}
-      ${tr.wiki ? `<p class="abio">${escapeHtml(tr.wiki)}</p>` : ''}</div>`);
-  }
-  const body = `
-    ${aboutError ? `<p class="ferror" role="alert">${escapeHtml(aboutError)}</p>` : ''}
-    ${head}
-    ${cardLinks ? `<p class="alinks">${cardLinks}</p>` : ''}
-    ${aboutLoading
-      ? '<p class="pnote">Loading…</p>'
-      : (sections.length
-        ? sections.join('')
-        : (aboutError ? '' : '<p class="pnote">No further info available.</p>'))}`;
-  $panel.innerHTML = panelChrome('About this track', body);
-}
-
-// render() pokes this after every grid paint: when the display-lagged
-// shown track settles onto a new one while the panel is open on the
-// now-playing track, follow it. A history-row panel (aboutEntry set)
-// stays put — its track never changes under it.
-function onShownTrackChange() {
-  if (activePanel !== 'about' || aboutEntry) return;
-  const t = aboutTrackFor(aboutStation, null);
-  if (!t || !aboutTrack) return;
-  if (t.artist === aboutTrack.artist && t.title === aboutTrack.title) return;
-  aboutTrack = t;
-  aboutData = null;
-  aboutError = null;
-  renderAboutPanel();
-  loadTrackInfo();
 }
 
 // --- Play history panel -----------------------------------------------

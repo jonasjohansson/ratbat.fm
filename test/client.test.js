@@ -21,7 +21,13 @@ function makeEl() {
   return {
     innerHTML: '',
     textContent: '',
-    style: { setProperty() {} },
+    // Records custom properties so grid assertions can read back what
+    // render() set (--cols/--rows/--count).
+    style: {
+      props: {},
+      setProperty(k, v) { this.props[k] = String(v); },
+      getPropertyValue(k) { return this.props[k] === undefined ? '' : this.props[k]; },
+    },
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     setAttribute() {},
     removeAttribute() {},
@@ -126,7 +132,9 @@ function boot(opts = {}) {
 ;globalThis.__test = {
   fmtClock, fmtTime, progressText, friendlyError, apiPost, adoptNow,
   checkOwnerKey, validateStoredKey, sendAction, render, schedulePoll,
-  connectEvents, refresh, probeHealth,
+  connectEvents, refresh, probeHealth, apiGet,
+  fmtCount, regionName, shortBio, trackInfoHTML, ensureTrackInfo,
+  get trackinfoCache() { return trackinfoCache; },
   displayDelayFor: displayDelayFor,
   get stations() { return stations; },
   get sseAlive() { return sseAlive; },
@@ -139,8 +147,7 @@ function boot(opts = {}) {
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onPanelChange,
-  loadTaste, renderTastePanel,
-  openAboutPanel, renderAboutPanel, loadTrackInfo, fmtCount, apiGet,
+  loadTaste, renderTastePanel, openNewStationFlow,
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
   get vocab() { return vocab; },
@@ -893,124 +900,94 @@ test('fmtCount compacts to K/M/B and passes small numbers through', ({ t }) => {
   assert.strictEqual(t.fmtCount(null), '');
 });
 
-test('about: card affordance appears only with the trackinfo capability — guests included', async () => {
-  const { t, els } = trackinfoBoot();
+test('track info: written onto the card for the current track, no toggle anywhere', async () => {
+  const { t, els } = boot();
+  t.capabilities.length = 0;
+  t.capabilities.push('trackinfo');
   await settle();
-  t.activeId = 'S1';
+  t.trackinfoCache.set('Artist A|Alpha', {
+    artist: 'Artist A', title: 'Alpha',
+    artistInfo: { bio: 'A dub engineer from Kingston who built his own desk.',
+      country: 'JM', listeners: 1200000, playcount: null,
+      tags: ['dub', 'roots reggae'], similar: ['King Tubby', 'Scientist'] },
+    trackInfo: { album: 'LP One', firstReleaseYear: 1976, listeners: null, playcount: null, tags: [], wiki: null },
+  });
   t.adoptNow(payload(trackA));
   const html = els.stations.innerHTML;
-  assert.ok(html.includes('about-link'), 'about link on the active card (guest, no key)');
-  assert.ok(html.includes('data-entry="e1"'), 'recent rows offer about too');
-  t.renderPanelBar();
-  assert.ok(!els.panelbar.innerHTML.includes('data-panel="about"'),
-    'no bar button — the panel is card-contextual');
+  assert.ok(html.includes('first release 1976'), 'year on the card');
+  assert.ok(html.includes('1.2M listeners'), 'listeners compacted');
+  assert.ok(html.includes('dub · roots reggae'), 'tags on the card');
+  assert.ok(html.includes('built his own desk'), 'bio on the card');
+  assert.ok(html.includes('Similar: King Tubby, Scientist'), 'similar on the card');
+  assert.ok(!html.includes('about-link') && !/>about</.test(html), 'no about affordance');
+});
 
-  // Same track, server without the capability: no affordance anywhere,
-  // and openPanel refuses.
-  const plain = boot({
-    fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
+test('track info: nothing extra without the capability, and the card still renders', async () => {
+  const { t, els } = boot();
+  t.capabilities.length = 0;
+  await settle();
+  t.adoptNow(payload(trackA));
+  const html = els.stations.innerHTML;
+  assert.ok(!html.includes('class="trackinfo"'), 'no info block without the capability');
+  assert.ok(html.includes('Alpha'), 'card still renders');
+});
+
+test('track info: the answer is cached under the track that came back, not the one asked for', async () => {
+  let calls = 0;
+  const { t } = boot({
+    fetchImpl: async (url) => {
+      if (String(url).includes('/trackinfo')) {
+        calls++;
+        // The server answers for what is CURRENT — a different track
+        // than the display-lagged card is showing.
+        return { ok: true, status: 200, json: async () => ({
+          artist: 'Artist B', title: 'Beta', artistInfo: { listeners: 5 }, trackInfo: {},
+        }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ stations: [] }) };
+    },
   });
   await settle();
-  plain.t.activeId = 'S1';
-  plain.t.adoptNow(payload(trackA));
-  assert.ok(!plain.els.stations.innerHTML.includes('about-link'));
-  await plain.t.openPanel('about');
-  assert.strictEqual(plain.t.activePanel, null);
-});
-
-test('about: fetch URL carries the station and, for a history row, the entry', async () => {
-  const { t, state } = trackinfoBoot();
-  await settle();
-  t.activeId = 'S1';
+  t.capabilities.length = 0;
+  t.capabilities.push('trackinfo');
   t.adoptNow(payload(trackA));
-  const urls = () =>
-    state.fetchCalls.map(([u]) => String(u)).filter((u) => u.includes('/trackinfo'));
-  t.openAboutPanel('S1', null);
-  await settle();
-  assert.strictEqual(urls()[0], 'https://radio.example.com/trackinfo?station=S1');
-  t.closePanel();
-  t.openAboutPanel('S1', 'e1');
-  await settle();
-  assert.strictEqual(urls()[1], 'https://radio.example.com/trackinfo?station=S1&entry=e1');
-});
-
-test('about: full enrichment renders facts line, bio, tags, similar, track section', async () => {
-  const { t, els } = trackinfoBoot();
-  await settle();
-  t.activeId = 'S1';
-  t.adoptNow(payload(trackA));
-  t.openAboutPanel('S1', null);
-  await settle();
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('<b>Artist A</b> — Alpha'), 'title line from the card');
-  assert.ok(html.includes('Kingston, Jamaica · first release 1976 · 1.2M listeners'),
-    'facts line — localized region, compacted listeners');
-  assert.ok(html.includes('Dub pioneer from the golden era.'), 'bio paragraph');
-  assert.ok(html.includes('dub, reggae, roots'), 'tags as a plain comma row');
-  assert.ok(html.includes('Similar: King Tubby, Scientist, Prince Jammy'), 'similar artists');
-  assert.ok(html.includes('LP One · 1979 · 45.3K plays'), 'track facts');
-  assert.ok(html.includes('Recorded at Channel One'), 'track wiki paragraph');
-  assert.ok(!html.includes('No further info'), 'no empty-state line when enriched');
-});
-
-test('about: a keyless server (all nulls) still renders card facts + a quiet empty line', async () => {
-  const { t, els } = trackinfoBoot(TRACKINFO_EMPTY);
-  await settle();
-  t.activeId = 'S1';
-  t.adoptNow(payload({ ...trackA, sourceURL: 'https://x.example/rel' }));
-  t.openAboutPanel('S1', null);
-  await settle();
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('<b>Artist A</b> — Alpha'), 'artist/title from the card');
-  assert.ok(html.includes('>Last.fm<'), 'origin from the card');
-  assert.ok(html.includes('https://x.example/rel'), 'source link from the card');
-  assert.ok(html.includes('No further info available.'), 'quiet empty line');
-  assert.ok(!html.includes('afacts'), 'no empty rows rendered');
-});
-
-test('about: reopening on the same track serves the cache — no second fetch', async () => {
-  const { t, state } = trackinfoBoot();
-  await settle();
-  t.activeId = 'S1';
-  t.adoptNow(payload(trackA));
-  const count = () =>
-    state.fetchCalls.filter(([u]) => String(u).includes('/trackinfo')).length;
-  t.openAboutPanel('S1', null);
-  await settle();
-  assert.strictEqual(count(), 1);
-  t.closePanel();
-  t.openAboutPanel('S1', null);
-  await settle();
-  assert.strictEqual(count(), 1, 'second open, same track — cache hit');
-});
-
-test('about: the open panel follows the shown track once the display settles', async () => {
-  const { t, els, state } = trackinfoBoot();
-  await settle();
-  t.activeId = 'S1';
-  t.adoptNow(payload(trackA));
-  t.openAboutPanel('S1', null);
-  await settle();
-  const count = () =>
-    state.fetchCalls.filter(([u]) => String(u).includes('/trackinfo')).length;
-  assert.strictEqual(count(), 1);
-  // A new track arrives; the display holds the old one through the lag
-  // window — the panel must not jump ahead of what's being heard.
-  const trackB = { ...trackA, title: 'Beta', durationSeconds: 15 };
-  t.adoptNow(payload(trackB));
-  await settle();
-  assert.strictEqual(count(), 1, 'no refetch during the lag window');
-  state.nowMs = 5_100; // > displayDelayFor(B)
+  await settle(); await settle(); await settle();
+  assert.equal(calls, 1, 'asked once');
+  assert.ok(t.trackinfoCache.has('Artist B|Beta'), 'cached under the answer');
+  assert.ok(!t.trackinfoCache.has('Artist A|Alpha'), 'never mis-keyed onto what we asked for');
   t.render();
-  await settle();
-  assert.strictEqual(count(), 2, 'settled track change refetches');
-  assert.ok(els.panel.innerHTML.includes('— Beta'), 'panel retitled to the new track');
+  await settle(); await settle();
+  assert.equal(calls, 1, 'and does not re-ask on the next paint');
 });
 
-// --- Library Radio (W6) -----------------------------------------------
+test('new-station card: an empty slot at the end of the grid, owner only', async () => {
+  const { t, els } = ownerBoot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('station--new'), 'owner gets the empty card');
+  assert.ok(html.includes('aria-label="Add a new station"'), 'and it is labeled');
+  // One real station + the ghost = two cards in the grid.
+  assert.equal(els.stations.style.getPropertyValue('--count'), '2', 'grid counts the ghost');
+});
 
-// /vocab as the v3 (S4) server ships it — libraryRadio in `kinds` is
-// the capability signal the editor gates on.
+test('new-station card: guests never see it, and it never starts audio', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  assert.ok(!els.stations.innerHTML.includes('station--new'), 'guest sees no empty card');
+  assert.equal(els.stations.style.getPropertyValue('--count'), '1', 'grid counts stations only');
+});
+
+test('shortBio cuts long text at a sentence, short text untouched', ({ t }) => {
+  assert.equal(t.shortBio('One sentence.'), 'One sentence.');
+  const long = `${'A'.repeat(200)}. ${'B'.repeat(200)}.`;
+  const cut = t.shortBio(long);
+  assert.ok(cut.length <= 261, 'capped');
+  assert.ok(cut.endsWith('.'), 'cut at a sentence end');
+});
+
+// Vocab from a server that knows Library Radio, and the deploy before it.
 const V3_VOCAB = {
   tags: { nts: ['dub'], lastFM: ['dub'], bandcamp: ['dub'], libraryRadio: [] },
   tagMatch: ['any', 'all'],
@@ -1156,7 +1133,7 @@ test('now block: album line suppressed when the album is empty', async () => {
   assert.ok(!els.stations.innerHTML.includes('class="album"'));
 });
 
-test('origin badge renders on non-active cards; links and about stay active-only', async () => {
+test('origin badge renders on non-active cards; links stay active-only', async () => {
   const { t, els } = trackinfoBoot();
   await settle();
   // Nobody tuned in — the card still says where the track came from.
@@ -1165,13 +1142,12 @@ test('origin badge renders on non-active cards; links and about stay active-only
   assert.ok(html.includes('class="origin"') && html.includes('>Last.fm<'),
     'origin badge on a non-active card');
   assert.ok(!html.includes('x.example'), 'source link held back until active');
-  assert.ok(!html.includes('aria-label="About Artist A'),
-    'now-playing about link held back until active');
+  assert.ok(!html.includes('x.example'), 'source links held back until active');
   t.activeId = 'S1';
   t.render();
   html = els.stations.innerHTML;
   assert.ok(html.includes('x.example'), 'active card gets the links');
-  assert.ok(html.includes('aria-label="About Artist A — Alpha"'), 'and the about link');
+  assert.ok(!html.includes('>about<'), 'and no about affordance anywhere');
 });
 
 test('edit pencil: guest never gets it even when the server advertises stations', async () => {
