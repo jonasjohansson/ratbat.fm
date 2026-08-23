@@ -19,6 +19,31 @@ const API_BASE = resolveAPIBase();
 let stations = [];
 let activeId = null;
 
+// --- Owner roster -----------------------------------------------------
+//
+// /now.json says what is PLAYING; POST /stations/list says what EXISTS.
+// The owner's grid is the roster — idle stations are cards too, because
+// everything about a station belongs on the station. Guests never fetch
+// this and never see anything but what is on air.
+//
+// It lives in app.js and not with the editor because the grid IS the
+// station list now; panels.js reads and mutates it the same way it reads
+// everything else in this file.
+let ownerStations = [];
+let ownerStationsError = null;
+// Stations with a start/stop/delete in flight — blocks double-fire, the
+// same idiom as actionBusy further down. The inline editor shares it.
+const stationBusy = new Set();
+
+// Which card, if any, has the inline editor open: a station id, or
+// NEW_CARD_ID for the ghost card's create form. panels.js sets it when
+// it opens and clears it when it closes; render() reads it to know it
+// must keep its hands off the grid (see the note there).
+let inlineEditorId = null;
+// The ghost card has no station id — this stands in for one. The NUL
+// prefix guarantees it can never collide with a real one.
+const NEW_CARD_ID = '\u0000new';
+
 // Owner passcode — actions (♥/⤴/⏭) are owner-only server-side; guests get
 // a radio, not a mixer. Enter it once via the lock button (top right)
 // and localStorage holds it with no expiry: no re-prompt on reload, on a
@@ -311,33 +336,193 @@ async function refresh() {
     pollFailures = Math.min(pollFailures + 1, 8);
     stations = [];
     stop();
-    $stations.innerHTML = '<p class="empty">Broadcaster offline.</p>';
+    // Same reason render() freezes: an open editor holds live DOM state
+    // in this subtree, and an unreachable broadcaster is no reason to
+    // throw away what the owner is halfway through typing.
+    if (inlineEditorId === null) {
+      $stations.innerHTML = '<p class="empty">Broadcaster offline.</p>';
+    }
   }
 }
 
 const ORIGIN_LABELS = { nts: 'NTS', lastFM: 'Last.fm', bandcamp: 'Bandcamp', library: 'Library' };
+
+// Station kinds ride the wire as Swift coding keys; the grid and the
+// editor both show them to people. One map, declared here because app.js
+// evaluates first and panels.js reads it — never a second copy over
+// there.
+const KIND_LABELS = {
+  nts: 'NTS', lastFM: 'Last.fm', bandcamp: 'Bandcamp',
+  playlist: 'Playlist', libraryRadio: 'Library radio',
+};
+const kindLabel = (k) => KIND_LABELS[k] || k || 'Station';
+
+// The owner surface exists only where BOTH are true: a key is stored and
+// the server advertises station CRUD. Everything per-station gates on
+// this one predicate — grid cards, the ✎, the ghost card.
+const canManageStations = () => !!ownerKey() && capabilities.includes('stations');
+
+async function loadOwnerStations() {
+  if (!canManageStations()) return;
+  try {
+    const { ok, status, data } = await apiPost('/stations/list', { token: ownerKey() });
+    if (ok) {
+      ownerStations = data.stations || [];
+      ownerStationsError = null;
+    } else if (status === 503) {
+      // 503 means the server HAS the route but no catalogue right now
+      // (no music folder). Say so above the grid — dropping the idle
+      // cards silently would read as "the stations are gone".
+      ownerStationsError = briefMessage(data.message, 'catalogue unavailable');
+    } else {
+      // 403 already dropped the key inside apiPost, which hides the
+      // owner surface wholesale; this line is for the other refusals.
+      ownerStationsError = friendlyError(status, data);
+    }
+  } catch {
+    ownerStationsError = 'Couldn’t reach the broadcaster';
+  }
+  render();
+}
+
+// Re-fetch on every signal that can change the roster: login, capability
+// discovery, the SSE `stations` nudge, and after each mutation. Losing
+// the key or the capability empties it, so the grid falls straight back
+// to the guest view instead of keeping owner cards on screen.
+function maybeLoadOwnerStations() {
+  if (canManageStations()) { loadOwnerStations(); return; }
+  if (!ownerStations.length && !ownerStationsError) return;
+  ownerStations = [];
+  ownerStationsError = null;
+  render();
+}
+
+// What the grid draws. A guest sees exactly what is on air. The owner
+// sees the roster: a station in both sources is one card built from both
+// — identity (kind, autoStart) from the list, playing state from
+// /now.json — and a station only the list knows about is a card marked
+// off air.
+function gridStations() {
+  if (!canManageStations() || !ownerStations.length) return stations;
+  const live = new Map(stations.map((s) => [s.id, s]));
+  const cards = ownerStations.map((o) => {
+    const l = live.get(o.id);
+    live.delete(o.id);
+    return l ? { ...o, ...l, offAir: false } : { ...o, offAir: true };
+  });
+  // Anything audibly on air that the roster hasn't caught up with (just
+  // created, list still in flight) is still a card — never drop what a
+  // listener can hear.
+  live.forEach((s) => cards.push(s));
+  return cards;
+}
+
+// ✎ opens the editor INSIDE this card. Owner + capability gated, and
+// never on a playlist station: those are desktop-managed and the wire
+// projects them to a name and a track count, so there is nothing here to
+// edit.
+function editButtonHTML(s) {
+  if (!canManageStations() || s.kind === 'playlist') return '';
+  return `<button type="button" class="act act--edit" title="Edit station" aria-label="Edit station">✎</button>`;
+}
+
+// The form's markup lives in panels.js, which owns the editor's state
+// machine. typeof-guarded like every other call into that file: it
+// evaluates second, and an early render must not throw.
+const editorBodyHTML = () =>
+  typeof editorHTML === 'function' && typeof editor !== 'undefined' && editor
+    ? editorHTML(editor)
+    : '';
+
+// A station that exists but isn't broadcasting. No transport, no track,
+// no display-lag machinery — who it is, what it is, and the one control
+// that changes that.
+function offAirCardHTML(s) {
+  const busy = stationBusy.has(s.id) ? 'disabled' : '';
+  const note = actionNotes.get(s.id);
+  // `broadcasting` from the roster while /now.json hasn't caught up means
+  // a start is in the air — say so rather than lying "off".
+  const starting = !!s.broadcasting;
+  return `
+    <div class="station station--off"
+      style="--accent-h:${stationHue(s.id)}"
+      data-id="${escapeHtml(s.id)}"
+      data-offair="1">
+      <div class="head">
+        <span class="dot off" aria-hidden="true"></span>
+        <span class="name">${escapeHtml(s.name)}</span>
+        ${editButtonHTML(s)}
+      </div>
+      <div class="now">
+        <span class="status">${starting ? 'Starting…' : 'Off air'}</span>
+        <span class="kind">${escapeHtml(kindLabel(s.kind))}</span>
+        ${s.kind === 'playlist' && s.trackCount != null
+          ? `<span class="album">${s.trackCount} tracks</span>` : ''}
+      </div>
+      <div class="foot">
+        ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
+        <button type="button" class="btn s-start" ${busy}>${starting ? 'Stop' : 'Start'}</button>
+      </div>
+    </div>`;
+}
+
+// The card in edit mode: its identity line, then the form where the
+// now-playing block was. Everything per-station is in there — this only
+// gives it a home inside the station it belongs to.
+function editorCardHTML(s) {
+  return `
+    <div class="station station--editing"
+      style="--accent-h:${stationHue(s.id)}"
+      data-id="${escapeHtml(s.id)}"
+      data-editing="1">
+      <div class="head">
+        <span class="dot${s.offAir ? ' off' : ''}" aria-hidden="true"></span>
+        <span class="name">${escapeHtml(s.name)}</span>
+      </div>
+      <div class="editor">${editorBodyHTML()}</div>
+    </div>`;
+}
 
 function render() {
   // Keep the lock in step with the stored passcode from one place: a 403
   // can drop the key mid-session, and the icon must not keep claiming
   // owner mode after the buttons have gone.
   syncLock();
-  if (!stations.length) {
+  // THE TRAP. renderGrid() rebuilds #stations wholesale, and it runs on
+  // every poll and every SSE frame — 1.5–3s apart. The inline editor
+  // lives inside that subtree, so repainting under an open form would
+  // throw away the focus, the caret and every keystroke since the last
+  // paint. While an editor is open the grid is FROZEN: the editor
+  // repaints only its own subtree from its own state (renderEditor in
+  // panels.js), and normal rendering resumes with a full renderGrid() on
+  // save, cancel or delete.
+  if (inlineEditorId !== null) return;
+  renderGrid();
+}
+
+function renderGrid() {
+  // An empty card at the end of the grid is the "add a station" button:
+  // the shape you are about to create, in the place it will appear.
+  // Owner-only, and only once the server advertises station CRUD.
+  const canCreate = canManageStations();
+  const cards = gridStations();
+  if (!cards.length && !canCreate) {
     $stations.style.setProperty('--cols', 1);
     $stations.style.setProperty('--rows', 1);
     $stations.style.setProperty('--count', 1);
     $stations.innerHTML = '<p class="empty">No stations broadcasting right now.</p>';
     return;
   }
-  // An empty card at the end of the grid is the "add a station" button:
-  // the shape you are about to create, in the place it will appear.
-  // Owner-only, and only once the server advertises station CRUD.
-  const canCreate = !!ownerKey() && capabilities.includes('stations');
-  const cardCount = stations.length + (canCreate ? 1 : 0);
+  // A roster that wouldn't load is a line across the top of the grid,
+  // never a card: the cards that DID load stay usable underneath it.
+  const rosterNote = ownerStationsError
+    ? `<p class="gnote" role="alert">${escapeHtml(ownerStationsError)}</p>`
+    : '';
+  const cardCount = cards.length + (canCreate ? 1 : 0);
   const [cols, rows] = gridDims(cardCount);
   $stations.style.setProperty('--cols', cols);
-  $stations.style.setProperty('--rows', rows);
-  $stations.style.setProperty('--count', cardCount);
+  $stations.style.setProperty('--rows', rows + (rosterNote ? 1 : 0));
+  $stations.style.setProperty('--count', cardCount + (rosterNote ? 1 : 0));
 
   const playing = !$audio.paused && $audio.readyState >= 3;
   // Loading = user asked to play (audio element has src + isn't paused)
@@ -345,7 +530,11 @@ function render() {
   // (readyState drops back under 3 and the `waiting` event fires).
   const loading = !!$audio.src && !$audio.paused && $audio.readyState < 3;
 
-  $stations.innerHTML = stations.map((s) => {
+  $stations.innerHTML = rosterNote + cards.map((s) => {
+    // The two cards that are not a now-playing card: this station's
+    // editor, and a station that exists but isn't on air.
+    if (inlineEditorId === s.id) return editorCardHTML(s);
+    if (s.offAir) return offAirCardHTML(s);
     const active = activeId === s.id;
     const isPlaying = active && playing;
     const isLoading = active && loading;
@@ -464,12 +653,9 @@ function render() {
     const nowLinks = t && (origin || (active && (t.sourceURL || t.youtubeURL)))
       ? `<span class="nowlinks">${origin}${active ? links(t) : ''}</span>`
       : '';
-    // ✎ opens the station editor — never inline UI on the card. The
-    // grid stays a radio; management lives in the panel, and the button
-    // only exists once the server advertises the CRUD capability.
-    const editBtn = ownerKey() && capabilities.includes('stations')
-      ? `<button type="button" class="act act--edit" title="Edit station" aria-label="Edit station">✎</button>`
-      : '';
+    // ✎ opens the station's editor inside this very card (see
+    // editorCardHTML) — the grid stays a radio until you ask it not to.
+    const editBtn = editButtonHTML(s);
     return `
       <div role="button" tabindex="0"
         class="${classes}"
@@ -492,21 +678,46 @@ function render() {
         </div>
       </div>`;
   }).join('') + (canCreate
-    ? `<div role="button" tabindex="0" class="station station--new" data-new="1"
-        title="Add a new station" aria-label="Add a new station">
-        <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
-      </div>`
+    ? (inlineEditorId === NEW_CARD_ID
+      // The ghost card holds its own create form: the station you are
+      // about to make, in the place it will appear.
+      ? `<div class="station station--new station--editing" data-new="1" data-editing="1">
+          <div class="head"><span class="name">New station</span></div>
+          <div class="editor">${editorBodyHTML()}</div>
+        </div>`
+      : `<div role="button" tabindex="0" class="station station--new" data-new="1"
+          title="Add a new station" aria-label="Add a new station">
+          <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
+        </div>`)
     : '');
 }
 
+// The inline editor lives inside #stations, so the grid's own listeners
+// are the only ones its events pass through. They hand the whole editor
+// subtree to panels.js, which owns that form's state machine — nothing
+// about it is re-implemented here. All four handlers are typeof-guarded:
+// panels.js evaluates second.
 $stations.addEventListener('click', (e) => {
   // Provenance links navigate; they must not toggle playback.
   if (e.target.closest('a')) return;
+  // An open editor is a form, not a play/pause surface.
+  if (e.target.closest('.editor')) {
+    if (typeof onEditorClick === 'function') onEditorClick(e);
+    return;
+  }
   const card = e.target.closest('.station');
   if (!card) return;
+  // The chrome around an open editor is inert — its own buttons are the
+  // way out, and a stray click must not reset the form.
+  if (card.dataset.editing) return;
   if (card.dataset.new) {
     // Defined in panels.js — guarded because that file loads second.
     if (typeof openNewStationFlow === 'function') openNewStationFlow();
+    return;
+  }
+  // The one control an off-air card offers.
+  if (e.target.closest('.s-start')) {
+    if (typeof startStopStation === 'function') startStopStation(card.dataset.id);
     return;
   }
   const act = e.target.closest('.act');
@@ -536,21 +747,40 @@ $stations.addEventListener('click', (e) => {
     sendAction(card.dataset.id, kind);
     return;
   }
+  // An off-air card has no stream behind it; its buttons are its whole
+  // interface.
+  if (card.dataset.offair || !card.dataset.url) return;
   toggle(card.dataset.id, card.dataset.url);
 });
 
 // div[role=button] doesn't get click-on-Enter/Space for free the way a
 // real <button> did — restore it so the cards stay keyboard-operable.
 $stations.addEventListener('keydown', (e) => {
+  // Typing in the editor must never reach the card's play/pause keys.
+  if (e.target.closest && e.target.closest('.editor')) {
+    if (typeof onEditorKeydown === 'function') onEditorKeydown(e);
+    return;
+  }
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const card = e.target.closest('.station');
-  if (!card || e.target.closest('.act')) return;
+  if (!card || e.target.closest('.act') || card.dataset.editing) return;
   e.preventDefault();
   if (card.dataset.new) {
     if (typeof openNewStationFlow === 'function') openNewStationFlow();
     return;
   }
+  if (card.dataset.offair || !card.dataset.url) return;
   toggle(card.dataset.id, card.dataset.url);
+});
+
+$stations.addEventListener('input', (e) => {
+  if (!e.target.closest || !e.target.closest('.editor')) return;
+  if (typeof onEditorInput === 'function') onEditorInput(e);
+});
+
+$stations.addEventListener('change', (e) => {
+  if (!e.target.closest || !e.target.closest('.editor')) return;
+  if (typeof onEditorChange === 'function') onEditorChange(e);
 });
 
 // Transient per-station status line ("Saved ♥", "Already in your
@@ -806,9 +1036,10 @@ function connectEvents() {
   src.addEventListener('stations', () => {
     lastEventAt = performance.now();
     refresh();
-    // Owner surfaces re-fetch their token-gated routes on the same
-    // nudge — the hook lives in panels.js and is guarded (load order).
-    if (typeof onStationsChanged === 'function') onStationsChanged();
+    // The owner's roster re-fetches itself over its own token-gated
+    // route on the same nudge — the grid shows idle stations too, so a
+    // station created or deleted elsewhere has to land here.
+    maybeLoadOwnerStations();
   });
   // Named heartbeat from the next server — makes the staleness watchdog
   // below exact instead of best-effort.
@@ -891,6 +1122,9 @@ async function probeHealth() {
   }
   // panels.js redraws the bar and strip — guarded, load-order note there.
   if (typeof onHealthChange === 'function') onHealthChange();
+  // A server that just advertised (or dropped) station CRUD changes what
+  // the grid is allowed to be.
+  maybeLoadOwnerStations();
 }
 
 // The strip shows uptime — keep it honest while the tab is watched.
@@ -971,6 +1205,8 @@ function syncLock() {
   if (on !== lastOwnerState) {
     lastOwnerState = on;
     if (typeof onOwnerChange === 'function') onOwnerChange();
+    // Logging in reveals the idle stations; logging out must forget them.
+    maybeLoadOwnerStations();
   }
 }
 
