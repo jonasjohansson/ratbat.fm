@@ -465,7 +465,7 @@ test('capabilities: old server (/health 404) shows no strip and no selection row
   assert.ok(els.history.innerHTML.includes('Play history'), 'history section still stands');
 });
 
-test('capabilities: new server + owner key → health strip, and no stations button', async () => {
+test('capabilities: new server + owner key → no bar buttons, no row without policy', async () => {
   const { t, els } = ownerBoot();
   await settle();
   assert.deepStrictEqual(t.capabilities, ['health', 'stations', 'vocab']);
@@ -474,10 +474,8 @@ test('capabilities: new server + owner key → health strip, and no stations but
   // Per-station management lives in the cards now; the bar keeps only
   // what could never belong to one station.
   assert.ok(!bar.includes('data-panel="stations"'), 'no stations button on the bar');
-  assert.ok(bar.includes('on air'), 'on-air strip');
-  assert.ok(bar.includes('up 3d 4h'), 'uptime labeled');
-  assert.ok(bar.includes('2 stations live'), 'broadcasting count spelled out');
-  assert.ok(bar.includes('gap 6m'), 'most recent gap');
+  // v1 server: no policy capability, so the owner row does not exist yet.
+  assert.ok(!bar.includes('pol-share'), 'no dial without the policy capability');
 });
 
 test('capabilities: guest gets no owner surface even when the server has it', async () => {
@@ -486,8 +484,7 @@ test('capabilities: guest gets no owner surface even when the server has it', as
   });
   await settle();
   t.renderTopbar();
-  assert.ok(!els.topbar.innerHTML.includes('data-panel="stations"'));
-  assert.ok(els.topbar.innerHTML.includes('class="health"'), 'strip is public');
+  assert.strictEqual(els.topbar.innerHTML, '', 'guests get no header row at all');
 });
 
 test('roster: a 503 says "catalogue unavailable" above the grid, it does not hide it', async () => {
@@ -708,24 +705,23 @@ test('capabilities: the Selection row gates on policy; taste and why are gone', 
   full.t.renderTopbar();
   const bar = full.els.topbar.innerHTML;
   assert.ok(bar.includes('pol-share'), 'the dial is on the header row');
-  assert.ok(bar.includes('class="health"'), 'so is the strip');
+  assert.ok(bar.includes('class="health"'), 'so is the status dot');
   assert.ok(!/taste|why/i.test(bar), 'no taste, no why');
 
   // Same server, no key: the strip stays public, the controls do not.
   const guest = boot({ fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }) });
   await settle();
   guest.t.renderTopbar();
-  assert.ok(guest.els.topbar.innerHTML.includes('class="health"'), 'strip is public');
-  assert.ok(!guest.els.topbar.innerHTML.includes('pol-share'), 'controls are not');
+  assert.strictEqual(guest.els.topbar.innerHTML, '', 'no row for guests — the cards say who is on air');
 
   // Owner against a server without the policy capability: strip only.
   const v1 = ownerBoot();
   await settle();
   v1.t.renderTopbar();
-  assert.ok(!v1.els.topbar.innerHTML.includes('pol-share'), 'no dial without the capability');
+  assert.strictEqual(v1.els.topbar.innerHTML, '', 'no row without the policy capability');
 });
 
-test('policy: /policy/get lands with the Selection panel — dial, read-only duration, honest copy', async () => {
+test('policy: /policy/get lands with the header row — dial, read-only duration, honest copy', async () => {
   const { t, els, state } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
   const gets = state.fetchCalls.filter(([u]) => String(u).includes('/policy/get'));
@@ -736,8 +732,7 @@ test('policy: /policy/get lands with the Selection panel — dial, read-only dur
   assert.ok(html.includes('value="30"'), 'share adopted from the server');
   assert.ok(html.includes('30%'), 'labeled');
   assert.ok(html.includes('not in your library'), '"new" defined honestly');
-  assert.ok(html.includes('longer than 25m'), 'mixSetMinimumDuration rendered read-only');
-  assert.ok(html.includes('next pool refill'), 'apply-time copy');
+  assert.ok(html.includes('longer than 25m'), 'mixSetMinimumDuration explained in the tooltip');
 });
 
 test('policy: each control sends only its own key — absent means untouched, null means off', async () => {
@@ -807,8 +802,7 @@ test('403 on an owner surface drops the key and takes the owner row with it', as
   await t.loadPolicy();
   assert.strictEqual(state.store.has('ratbat_key'), false, 'key dropped centrally');
   t.renderTopbar();
-  assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'owner controls gone with the key');
-  assert.ok(els.topbar.innerHTML.includes('class="health"'), 'public strip stays');
+  assert.strictEqual(els.topbar.innerHTML, '', 'the row goes with the key');
 });
 
 test('fmtCount compacts to K/M/B and passes small numbers through', ({ t }) => {
@@ -1130,26 +1124,30 @@ test('settings affordance: guest never gets it even when the server advertises s
   assert.ok(html.includes('title="Station settings"'), 'and titled');
 });
 
-test('health strip: singular/plural station count and "up" before the uptime', async () => {
-  const stripBoot = (count) => boot({
+// The strip is a dot now; what it SAYS lives in its tooltip, so these
+// assertions read the title rather than the glyph. Owner + policy,
+// because the row only exists for the owner.
+async function healthTooltip(overrides) {
+  const { t, els } = boot({
+    storedKey: 'valid',
     fetchImpl: routed({
-      '/health': () => ({ status: 200, body: { ...HEALTH, broadcastingCount: count } }),
+      '/health': () => ({ status: 200, body: { ...HEALTH, capabilities: ['health', 'policy'], ...overrides } }),
+      '/policy/get': () => ({ status: 200, body: { newMusicShare: null, excludeMixSets: false, mixSetMinimumDuration: 1500 } }),
     }),
   });
-  const one = stripBoot(1);
   await settle();
-  one.t.renderTopbar();
-  assert.ok(one.els.topbar.innerHTML.includes('● on air · up 3d 4h · 1 station live'),
-    `singular (${one.els.topbar.innerHTML})`);
-  const two = stripBoot(2);
-  await settle();
-  two.t.renderTopbar();
-  assert.ok(two.els.topbar.innerHTML.includes('2 stations live'), 'plural');
-  const off = stripBoot(0);
-  await settle();
-  off.t.renderTopbar();
-  assert.ok(off.els.topbar.innerHTML.includes('○ off air · up 3d 4h'),
-    'off-air keeps its shape with the same up-wording');
+  t.renderTopbar();
+  const m = els.topbar.innerHTML.match(/class="health[^"]*" title="([^"]*)"/);
+  return m ? m[1] : '';
+}
+
+test('health dot: the detail lives in its tooltip, singular and plural', async () => {
+  const one = await healthTooltip({ broadcastingCount: 1 });
+  assert.ok(one.includes('● on air · up 3d 4h · 1 station live'), `singular (${one})`);
+  assert.ok((await healthTooltip({ broadcastingCount: 2 })).includes('2 stations live'), 'plural');
+  const off = await healthTooltip({ broadcastingCount: 0 });
+  assert.ok(off.includes('○ off air'), 'off air');
+  assert.ok(!off.includes('station live'), 'and no count when nothing is on');
 });
 
 test('header row: the strip is labeled and the controls carry accessible names', async () => {
@@ -1157,7 +1155,7 @@ test('header row: the strip is labeled and the controls carry accessible names',
   await settle();
   full.t.renderTopbar();
   const bar = full.els.topbar.innerHTML;
-  assert.ok(bar.includes('title="Broadcaster health"'), 'strip labeled');
+  assert.ok(/class="health[^"]*" title="[^"]*on air/.test(bar), 'the dot carries the detail');
   assert.ok(bar.includes('aria-label="Share of new music"'), 'the dial has a name');
   assert.ok(bar.includes('New music') && bar.includes('Skip mix sets'), 'both controls read as words');
 });

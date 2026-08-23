@@ -165,9 +165,11 @@ main {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-block: 0.15em;
-  /* When there IS more below, the last visible line fades instead of
-     being guillotined — an honest edge reads as "scroll", a hard cut
-     reads as broken. Content that fits never reaches the fade. */
+}
+/* Only a block that really does continue below fades at its edge — the
+   class is set after each paint by measuring, because a centered block
+   with room to spare would otherwise fade its own last line. */
+.station .now.more-below {
   mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
   color: var(--muted);
@@ -407,7 +409,7 @@ main {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  gap: 0.4rem 0.9rem;
   padding: 0.45rem calc(var(--gap) + 0.4rem);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-small);
@@ -420,8 +422,13 @@ main {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.4rem 0.9rem;
-  margin-left: auto;
 }
+#topbar .health {
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: help;
+}
+#topbar .health.off { opacity: 0.5; }
 #topbar .check { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 #topbar input[type="range"] { width: clamp(80px, 14vw, 160px); }
 #topbar .pol-share-label { min-width: 2.6em; font-variant-numeric: tabular-nums; }
@@ -722,11 +729,23 @@ dialog::backdrop {
   .station.loading .icon--loading { animation: none; }
 }
 
+/* While a form is open the grid gives up its fixed rows: the editing
+   card grows to fit, the others keep a readable minimum, and the page
+   scrolls. A form cut off at a card edge is not a form. */
+main.editing {
+  height: auto;
+  grid-template-rows: none;
+}
+main.editing .station { min-height: 40vh; }
+main.editing .station--editing { min-height: 0; }
+main.editing .station .now { overflow: visible; }
+
 /* --- The station editor, inside its card ----------------------------- *
  * The form replaces the card's now-playing body while it is open, so it
  * inherits the card's scroll and its accent. Controls are full-width and
  * stacked: a card is a narrow column, not a settings page. */
 
+.station--editing { overflow: visible; }
 .station .editor {
   display: grid;
   gap: 0.7rem;
