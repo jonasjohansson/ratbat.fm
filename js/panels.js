@@ -55,14 +55,16 @@ function maybeLoadPolicy() {
 function renderTopbar() {
   if (!$topbar) return;
   maybeLoadPolicy();
-  // Left: what the broadcaster is doing, for everyone. Right: how it
-  // picks what to play, for the owner. Both on one line, always there.
-  const strip = healthStripHTML();
+  // The row belongs to the settings, so it only exists for the owner: a
+  // guest's cards already say who is on air. The health dot rides along
+  // as a glance, with the detail in its tooltip.
   const owns = !!ownerKey() && capabilities.includes('policy');
-  $topbar.hidden = !strip && !owns;
+  $topbar.hidden = !owns;
   const note = panelNote
     ? `<span class="tnote" role="status">${escapeHtml(panelNote)}</span>` : '';
-  $topbar.innerHTML = `${strip}${owns ? `<span class="pol">${policyRowHTML()}${note}</span>` : ''}`;
+  $topbar.innerHTML = owns
+    ? `${healthStripHTML()}<span class="pol">${policyRowHTML()}${note}</span>`
+    : '';
 }
 
 // --- Health strip -----------------------------------------------------
@@ -99,7 +101,10 @@ function healthStripHTML() {
     if (s.lastGap && (!gap || s.lastGap.end > gap.end)) gap = s.lastGap;
   });
   if (gap) line += ` · gap ${fmtSpan(gap.end - gap.start)} at ${fmtTime(gap.start)}`;
-  return `<span class="health" title="Broadcaster health">${escapeHtml(line)}</span>`;
+  // A dot, not a sentence. The row belongs to the settings; whether the
+  // broadcaster is up is a glance, and the detail is one hover away.
+  return `<span class="health${live > 0 ? '' : ' off'}" title="${escapeHtml(line)}"
+    aria-label="${escapeHtml(line)}">${live > 0 ? '●' : '○'}</span>`;
 }
 
 // --- Vocab ------------------------------------------------------------
@@ -307,7 +312,6 @@ function policyRowHTML() {
       ? ` title="A mix set is anything longer than ${escapeHtml(fmtSpan(minDur))}."` : ''}>
       <input type="checkbox" class="pol-mixsets"${policy.excludeMixSets ? ' checked' : ''}> Skip mix sets
     </label>
-    <span class="tnote" title="Applies to every station at its next pool refill — no restart.">applies at next refill</span>
     ${policyError ? `<span class="ferror" role="alert">${escapeHtml(policyError)}</span>` : ''}`;
 }
 

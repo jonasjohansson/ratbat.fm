@@ -520,7 +520,25 @@ function render() {
   renderGrid();
 }
 
+// The now-playing block fades at its bottom edge to say "there is more
+// below". Only CSS can draw it and only layout can know whether it is
+// true — a centered block with nothing to scroll to would otherwise
+// fade its own last line for no reason. So: measure after each paint.
+function markScrollableBlocks() {
+  if (!$stations.querySelectorAll) return;
+  $stations.querySelectorAll('.now').forEach((el) => {
+    if (!el.classList || typeof el.classList.toggle !== 'function') return;
+    el.classList.toggle('more-below', el.scrollHeight > el.clientHeight + 1);
+  });
+}
+
 function renderGrid() {
+  // A form is taller than a now-playing line. While one is open the grid
+  // drops its one-screen discipline and lets the cards size to their
+  // content — the page scrolls instead of the form being cut off.
+  if ($stations.classList && typeof $stations.classList.toggle === 'function') {
+    $stations.classList.toggle('editing', inlineEditorId !== null);
+  }
   // An empty card at the end of the grid is the "add a station" button:
   // the shape you are about to create, in the place it will appear.
   // Owner-only, and only once the server advertises station CRUD.
@@ -711,6 +729,7 @@ function renderGrid() {
           <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
         </div>`)
     : '');
+  markScrollableBlocks();
 }
 
 // The inline editor lives inside #stations, so the grid's own listeners
