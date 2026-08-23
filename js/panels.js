@@ -1,31 +1,29 @@
-// Ratbat panels — everything that is NOT the station grid: the bottom
-// panel bar with its health strip, the panel sheet above it, the station
-// editor, the selection-policy controls, the taste transparency panel,
-// the public about-this-track panel, and the play history (relocated
-// from app.js).
+// Ratbat panels — the app-wide surfaces, plus the station editor's state
+// machine. Two different things, deliberately:
+//
+//   * The bottom panel bar with its health strip and the sheet above it:
+//     Selection (how pools are filled, for EVERY station), Your taste,
+//     and Play history. Nothing per-station lives there any more.
+//   * The station editor — its markup, its state and its writes. It is
+//     no longer panel-hosted: app.js paints it INSIDE the station's own
+//     card and delegates that card's click/input/change/keydown into the
+//     onEditor* handlers at the bottom of this file. Everything about a
+//     station belongs on the station.
 //
 // Load order matters and is deliberate: app.js runs first (both scripts
 // are `defer`), and classic scripts share one global lexical scope, so
 // this file reads app.js's top-level bindings (apiPost, ownerKey,
-// escapeHtml, capabilities, …) directly — no bundler, no window.
-// plumbing. The reverse direction is guarded: app.js calls the
-// onOwnerChange / onHealthChange / onStationsChanged hooks below through
-// `typeof` checks, because render() can fire from an early fetch before
-// this file has evaluated.
-//
-// Everything here renders into #panelbar / #panel / #dlg — siblings of
-// the #stations grid. render() re-renders the grid destructively every
-// few seconds, so no form state may ever live inside it; panels own
-// their DOM the way the old #history bar did.
+// escapeHtml, capabilities, ownerStations, KIND_LABELS, renderGrid, …)
+// directly — no bundler, no window. plumbing, and never a second copy of
+// a name app.js already owns. The reverse direction is guarded: app.js
+// calls the hooks and the onEditor* handlers below through `typeof`
+// checks, because render() can fire from an early fetch before this file
+// has evaluated.
 
 const $panelbar = document.getElementById('panelbar');
 const $panel = document.getElementById('panel');
 const $dlg = document.getElementById('dlg');
 
-const KIND_LABELS = {
-  nts: 'NTS', lastFM: 'Last.fm', bandcamp: 'Bandcamp',
-  playlist: 'Playlist', libraryRadio: 'Library radio',
-};
 const POPULARITY_LABELS = { hits: 'Hits', middle: 'Middle', deepCuts: 'Deep cuts' };
 const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
 
@@ -45,13 +43,15 @@ const PANELS = {
     load: () => loadHistory(false),
     render: () => renderHistoryPanel(),
   },
-  stations: {
-    label: 'Stations',
-    visible: () => !!ownerKey() && capabilities.includes('stations'),
-    // Policy rides along: the Selection section lives at the bottom of
-    // this panel, so its /policy/get lands on the same open.
-    load: () => Promise.all([loadOwnerStations(), loadPolicy()]),
-    render: () => renderStationsPanel(),
+  selection: {
+    // App-wide, not per-station: how every station's pool gets filled.
+    // The per-station knobs moved into the cards, so what is left here
+    // is exactly what could never live on one station — hence the name
+    // on the bar button.
+    label: 'Selection',
+    visible: () => !!ownerKey() && capabilities.includes('policy'),
+    load: () => loadPolicy(),
+    render: () => renderSelectionPanel(),
   },
   taste: {
     // "Your taste" on the bar button — a bare "Taste" was a riddle to
@@ -90,7 +90,9 @@ async function openPanel(name) {
 
 function closePanel() {
   activePanel = null;
-  editor = null;   // a half-edited form must not lurk behind a closed sheet
+  // The editor is NOT touched here any more: it lives in a card, not in
+  // this sheet, and closing a panel must not throw away a form the owner
+  // is still filling in.
   if ($panel) {
     $panel.hidden = true;
     $panel.classList.remove('open');
@@ -163,89 +165,42 @@ function loadVocab() {
   return vocabPromise;
 }
 
-// --- Stations panel ---------------------------------------------------
+// --- Per-station writes ------------------------------------------------
+//
+// start / stop / auto-start / delete. The roster they act on lives in
+// app.js (the grid is the station list); what lives here is the flow —
+// optimistic patch, reconcile, and where the answer is shown.
 
-let ownerStations = [];
-let ownerStationsError = null;
-// Stations with a start/stop/delete in flight — blocks double-fire,
-// same idiom as actionBusy on the grid.
-const stationBusy = new Set();
 let panelNote = null;
 
 function showPanelNote(text) {
   panelNote = text;
-  if (activePanel === 'stations') renderStationsPanel();
+  if (activePanel === 'selection') renderSelectionPanel();
   setTimeout(() => {
     if (panelNote === text) {
       panelNote = null;
-      if (activePanel === 'stations') renderStationsPanel();
+      if (activePanel === 'selection') renderSelectionPanel();
     }
   }, 4000);
 }
 
-async function loadOwnerStations() {
-  if (!ownerKey()) return;
-  try {
-    const { ok, status, data } = await apiPost('/stations/list', { token: ownerKey() });
-    if (ok) {
-      ownerStations = data.stations || [];
-      ownerStationsError = null;
-    } else if (status === 503) {
-      // 503 means the server HAS the route but no catalogue right now
-      // (no music folder). Show that — hiding the panel would read as
-      // "feature gone" when it's "library unavailable".
-      ownerStationsError = briefMessage(data.message, 'catalogue unavailable');
-    } else {
-      // 403 already dropped the key inside apiPost; the visibility gate
-      // then closes the panel via onOwnerChange, so this line is for
-      // the other refusals.
-      ownerStationsError = friendlyError(status, data);
-    }
-  } catch {
-    ownerStationsError = 'Couldn’t reach the broadcaster';
-  }
-  if (activePanel === 'stations') renderStationsPanel();
-}
-
-function stationRowHTML(s) {
-  const busy = stationBusy.has(s.id) ? 'disabled' : '';
-  // Playlist stations are desktop-managed (settled decision): the wire
-  // projects them to name + trackCount only, so the row offers
-  // start/stop/auto-start but no Edit or Delete.
-  const editable = s.kind !== 'playlist';
-  return `
-    <li class="row" data-id="${escapeHtml(s.id)}">
-      <span class="dot${s.broadcasting ? '' : ' off'}" aria-hidden="true"></span>
-      <span class="rname">${escapeHtml(s.name)}</span>
-      <span class="badge">${escapeHtml(KIND_LABELS[s.kind] || s.kind)}</span>
-      ${s.kind === 'playlist' && s.trackCount != null
-        ? `<span class="rmeta">${s.trackCount} tracks</span>` : ''}
-      <span class="rspacer"></span>
-      <label class="check rauto" title="Start this station when the broadcaster launches">
-        <input type="checkbox" class="s-auto"${s.autoStart ? ' checked' : ''} ${busy}> auto
-      </label>
-      <button type="button" class="btn s-startstop" ${busy}>${s.broadcasting ? 'Stop' : 'Start'}</button>
-      ${editable ? `
-      <button type="button" class="btn s-edit" ${busy}>Edit</button>
-      <button type="button" class="btn btn--danger s-delete" ${busy}>Delete</button>` : ''}
-    </li>`;
-}
-
-function renderStationsPanel() {
-  if (!$panel || activePanel !== 'stations') return;
-  let body;
-  if (editor) {
-    body = editorHTML(editor);
+// A station-scoped message goes where the eye already is: into the open
+// editor's error line when that card is being edited, otherwise onto the
+// card itself as one of the transient notes the grid already does.
+function stationNote(id, text) {
+  if (editor && editor.id === id) {
+    editor.error = text;
+    renderEditor();
   } else {
-    const rows = ownerStations.map(stationRowHTML).join('');
-    body = `
-      ${panelNote ? `<p class="pnote" role="status">${escapeHtml(panelNote)}</p>` : ''}
-      ${ownerStationsError ? `<p class="ferror" role="alert">${escapeHtml(ownerStationsError)}</p>` : ''}
-      <button type="button" class="btn s-new">＋ New station</button>
-      <ul class="plist">${rows || (ownerStationsError ? '' : '<li class="hempty">No stations yet.</li>')}</ul>
-      ${policySectionHTML()}`;
+    showNote(id, text);
   }
-  $panel.innerHTML = panelChrome('Stations', body);
+}
+
+// Repaint after an owner mutation. An open editor owns its own subtree
+// and the grid around it is frozen (see render() in app.js); with no
+// editor open the grid is free to repaint wholesale.
+function repaintStations() {
+  if (editor) renderEditor(); else render();
 }
 
 async function startStopStation(id) {
@@ -253,24 +208,31 @@ async function startStopStation(id) {
   if (!s || stationBusy.has(id)) return;
   const starting = !s.broadcasting;
   stationBusy.add(id);
-  // Optimistic: the dot flips now; the response and the SSE `stations`
-  // nudge reconcile a lie.
-  s.broadcasting = starting;
-  renderStationsPanel();
+  // Optimistic: the card flips now; the response, the SSE `stations`
+  // nudge and the next /now.json reconcile a lie.
+  setBroadcasting(s, starting);
+  repaintStations();
   try {
     const { ok, status, data } = await apiPost(
       `/stations/${starting ? 'start' : 'stop'}`, { token: ownerKey(), station: id });
     if (!ok) {
-      s.broadcasting = !starting;
-      showPanelNote(friendlyError(status, data));
+      setBroadcasting(s, !starting);
+      stationNote(id, friendlyError(status, data));
     }
   } catch {
-    s.broadcasting = !starting;
-    showPanelNote('Couldn’t reach the broadcaster');
+    setBroadcasting(s, !starting);
+    stationNote(id, 'Couldn’t reach the broadcaster');
   }
   stationBusy.delete(id);
-  renderStationsPanel();
+  repaintStations();
   loadOwnerStations();
+}
+
+// The roster row and the open editor hold the same fact twice — the
+// editor's copy drives its Start/Stop label — so they flip together.
+function setBroadcasting(s, on) {
+  s.broadcasting = on;
+  if (editor && editor.id === s.id) editor.broadcasting = on;
 }
 
 async function toggleAutostart(id) {
@@ -278,19 +240,22 @@ async function toggleAutostart(id) {
   if (!s) return;
   const enabled = !s.autoStart;
   s.autoStart = enabled;
-  renderStationsPanel();
+  if (editor && editor.id === id) editor.autoStart = enabled;
+  repaintStations();
   try {
     const { ok, status, data } = await apiPost('/stations/autostart',
       { token: ownerKey(), station: id, enabled });
     if (!ok) {
       s.autoStart = !enabled;
-      showPanelNote(friendlyError(status, data));
+      if (editor && editor.id === id) editor.autoStart = !enabled;
+      stationNote(id, friendlyError(status, data));
     }
   } catch {
     s.autoStart = !enabled;
-    showPanelNote('Couldn’t reach the broadcaster');
+    if (editor && editor.id === id) editor.autoStart = !enabled;
+    stationNote(id, 'Couldn’t reach the broadcaster');
   }
-  renderStationsPanel();
+  repaintStations();
 }
 
 // --- Selection policy (W4) --------------------------------------------
@@ -332,7 +297,7 @@ async function loadPolicy() {
   } catch {
     policyError = 'Couldn’t reach the broadcaster';
   }
-  if (activePanel === 'stations') renderStationsPanel();
+  if (activePanel === 'selection') renderSelectionPanel();
 }
 
 // Optimistic set with reconcile: patch locally, POST only the changed
@@ -342,7 +307,7 @@ async function setPolicy(patch) {
   const prev = { ...policy };
   Object.assign(policy, patch);
   if (policy.newMusicShare != null) policyShareMemory = policy.newMusicShare;
-  renderStationsPanel();
+  renderSelectionPanel();
   try {
     // Object spread keeps patch's explicit nulls; keys not in patch are
     // genuinely absent from the JSON — the absent-vs-null distinction
@@ -357,7 +322,16 @@ async function setPolicy(patch) {
     policy = prev;
     showPanelNote('Couldn’t reach the broadcaster');
   }
-  renderStationsPanel();
+  renderSelectionPanel();
+}
+
+// The panel is titled Selection, so the section inside it isn't — one
+// heading, not an echo.
+function renderSelectionPanel() {
+  if (!$panel || activePanel !== 'selection') return;
+  $panel.innerHTML = panelChrome('Selection', `
+    ${panelNote ? `<p class="pnote" role="status">${escapeHtml(panelNote)}</p>` : ''}
+    ${policySectionHTML()}`);
 }
 
 function policySectionHTML() {
@@ -390,7 +364,7 @@ function policySectionHTML() {
       <p class="fhint">Applies to every station at its next pool refill — no restart.</p>
       ${policyError ? `<p class="ferror" role="alert">${escapeHtml(policyError)}</p>` : ''}`;
   }
-  return `<div class="psec pol"><h3>Selection</h3>${inner}</div>`;
+  return `<div class="psec pol">${inner}</div>`;
 }
 
 // --- Delete (typed-name confirm) -------------------------------------
@@ -446,26 +420,34 @@ async function deleteStationFlow(id) {
   const confirmed = await confirmDeleteStation(s);
   if (!confirmed) return;
   stationBusy.add(id);
-  renderStationsPanel();
+  repaintStations();
   try {
     const { ok, status, data } = await apiPost('/stations/delete',
       { token: ownerKey(), station: id });
     if (ok) {
       // The server stops a broadcasting station before deleting it —
-      // no client-side stop dance needed.
+      // no client-side stop dance needed. The card leaving the grid is
+      // the confirmation; there is no list left to put a note in.
       ownerStations = ownerStations.filter((x) => x.id !== id);
-      showPanelNote(`Deleted ${s.name}`);
-    } else {
-      showPanelNote(friendlyError(status, data));
+      stationBusy.delete(id);
+      if (editor && editor.id === id) closeEditor(); else render();
+      loadOwnerStations();
+      return;
     }
+    stationNote(id, friendlyError(status, data));
   } catch {
-    showPanelNote('Couldn’t reach the broadcaster');
+    stationNote(id, 'Couldn’t reach the broadcaster');
   }
   stationBusy.delete(id);
-  renderStationsPanel();
+  repaintStations();
 }
 
 // --- Station editor ---------------------------------------------------
+//
+// One editor at a time, open inside its own station card. app.js paints
+// the card (it owns #stations) and freezes the grid while this is open;
+// everything below owns the form's state and repaints ONLY the form's
+// own subtree, because the caret and the half-typed name live in there.
 
 let editor = null;
 
@@ -497,7 +479,8 @@ function editorFrom(s) {
     shufflePool: !!s.shufflePool,
     excludeOwnedLibrary: !!q.excludeOwnedLibrary,
     excludedArtists: (q.excludedArtists || []).slice(),
-    broadcasting: !!s.broadcasting, error: null, saving: false,
+    broadcasting: !!s.broadcasting, autoStart: !!s.autoStart,
+    error: null, saving: false,
   };
 }
 
@@ -563,35 +546,70 @@ function validateEditor(ed) {
   return null;
 }
 
-function newStationFlow() {
-  editor = newEditor((vocab && vocab.kinds && vocab.kinds[0]) || 'nts');
-  loadVocab().then(() => {
-    if (activePanel === 'stations' && editor) renderStationsPanel();
-  });
-  renderStationsPanel();
-}
+// --- Opening and closing the inline editor ---------------------------
+//
+// Opening sets app.js's inlineEditorId (which freezes the grid) and then
+// paints ONCE so the form exists inside its card. From that moment
+// renderEditor() is the only thing allowed to touch it; closing hands
+// the grid back with a full paint.
 
-function editStationRow(id) {
-  const s = ownerStations.find((x) => x.id === id);
-  if (!s || s.kind === 'playlist') return;
-  editor = editorFrom(s);
-  loadVocab().then(() => {
-    if (activePanel === 'stations' && editor) renderStationsPanel();
-  });
-  renderStationsPanel();
-}
-
-// Entry points for the grid (app.js calls these, guarded): the ghost
-// card opens the stations panel straight into a blank editor.
-async function openNewStationFlow() {
-  await openPanel('stations');
-  newStationFlow();
+// Repaint the form's own subtree and nothing else. The card around it
+// stays exactly as painted, so the input the owner is typing in is the
+// same DOM node it was a moment ago.
+function renderEditor() {
+  if (!editor) return;
+  const host = $stations && typeof $stations.querySelector === 'function'
+    ? $stations.querySelector('.editor')
+    : null;
+  if (host) {
+    host.innerHTML = editorHTML(editor);
+    return;
+  }
+  // No host yet — the first paint, or a DOM that can't query. The full
+  // paint draws the editor into its card from this same state.
+  renderGrid();
 }
 
 // Entry point for the grid's per-card ✎ (app.js calls this, guarded).
 async function openStationEditorById(id) {
-  await openPanel('stations');
-  editStationRow(id);
+  if (!canManageStations()) return;
+  // The ✎ can be on a card the roster hasn't described yet (broadcasting
+  // but listed only in /now.json) — there is nothing to edit until it
+  // has.
+  if (!ownerStations.some((x) => x.id === id)) await loadOwnerStations();
+  const s = ownerStations.find((x) => x.id === id);
+  if (!s || s.kind === 'playlist') return;
+  editor = editorFrom(s);
+  inlineEditorId = id;
+  renderGrid();
+  // The tag palette and region list come from /vocab; the form is usable
+  // (free-text tags) before they land and gains the chips when they do.
+  loadVocab().then(() => { if (inlineEditorId === id) renderEditor(); });
+}
+
+// Entry point for the ghost card (app.js calls this, guarded): a blank
+// create form, inline in the empty slot it will fill.
+function openNewStationFlow() {
+  if (!canManageStations()) return;
+  editor = newEditor((vocab && vocab.kinds && vocab.kinds[0]) || 'nts');
+  inlineEditorId = NEW_CARD_ID;
+  renderGrid();
+  loadVocab().then(() => {
+    if (inlineEditorId !== NEW_CARD_ID || !editor) return;
+    // vocab.kinds is what THIS server can create — re-seed the blank
+    // form's kind if the fallback guess isn't on the menu.
+    const kinds = (vocab && vocab.kinds) || [];
+    if (kinds.length && !kinds.includes(editor.kind)) editor.kind = kinds[0];
+    renderEditor();
+  });
+}
+
+// Cancel, save and delete all land here: the grid has been frozen for as
+// long as the form was open, so leaving it repaints everything.
+function closeEditor() {
+  editor = null;
+  inlineEditorId = null;
+  render();
 }
 
 async function submitEditor(applyNow) {
@@ -600,24 +618,26 @@ async function submitEditor(applyNow) {
   const err = validateEditor(ed);
   if (err) {
     ed.error = err;
-    renderStationsPanel();
+    renderEditor();
     return;
   }
   ed.saving = true;
   ed.error = null;
-  renderStationsPanel();
+  renderEditor();
   const path = ed.mode === 'create' ? '/stations/create' : '/stations/update';
   try {
     const { ok, status, data } = await apiPost(path, buildStationBody(ed, applyNow));
     if (ok && data.station) {
       // The response is authoritative — the server may uniquify the
       // name ("(2)") — so adopt it, then re-fetch the list anyway; the
-      // optimistic patch just makes the panel honest immediately.
+      // optimistic patch just makes the grid honest immediately.
       const s = data.station;
       const i = ownerStations.findIndex((x) => x.id === s.id);
       if (i >= 0) ownerStations[i] = s; else ownerStations.push(s);
-      editor = null;
-      showPanelNote(ed.mode === 'create'
+      closeEditor();
+      // The note lands on the station's own card — including a brand new
+      // one, which the optimistic patch above just put in the grid.
+      showNote(s.id, ed.mode === 'create'
         ? `Created ${s.name}`
         : (applyNow ? `Saved & restarted ${s.name}` : `Saved ${s.name}`));
       loadOwnerStations();
@@ -633,7 +653,7 @@ async function submitEditor(applyNow) {
   }
   if (editor === ed) {
     ed.saving = false;
-    renderStationsPanel();
+    renderEditor();
   }
 }
 
@@ -737,7 +757,7 @@ function toggleTag(tag) {
   if (!editor) return;
   const i = editor.tags.indexOf(tag);
   if (i >= 0) editor.tags.splice(i, 1); else editor.tags.push(tag);
-  renderStationsPanel();
+  renderEditor();
 }
 
 function addTagFromInput() {
@@ -746,19 +766,19 @@ function addTagFromInput() {
   if (!input) return;
   const tag = input.value.trim();
   if (tag && !editor.tags.includes(tag)) editor.tags.push(tag);
-  renderStationsPanel();
+  renderEditor();
 }
 
 function addRegion(code) {
   if (!editor || editor.regions.includes(code)) return;
   editor.regions.push(code);
-  renderStationsPanel();
+  renderEditor();
 }
 
 function removeRegion(code) {
   if (!editor) return;
   editor.regions = editor.regions.filter((c) => c !== code);
-  renderStationsPanel();
+  renderEditor();
 }
 
 // --- Taste panel (W5) -------------------------------------------------
@@ -920,7 +940,9 @@ function onHealthChange() { renderPanelBar(); }
 // owner state re-fetches its token-gated route here instead of trusting
 // the event body.
 function onStationsChanged() {
-  if (activePanel === 'stations' && PANELS.stations.visible()) loadOwnerStations();
+  // The roster feeds the GRID now, not a panel, so it refreshes whenever
+  // the server says the catalogue moved — no panel needs to be open.
+  maybeLoadOwnerStations();
 }
 
 // --- Wiring -----------------------------------------------------------
@@ -945,14 +967,14 @@ function onPanelClick(e) {
   // Editor
   if (btn.classList.contains('f-chip')) return toggleTag(btn.dataset.tag);
   if (btn.classList.contains('f-tagmatch')) {
-    if (editor) { editor.tagMatch = btn.dataset.match; renderStationsPanel(); }
+    if (editor) { editor.tagMatch = btn.dataset.match; renderEditor(); }
     return;
   }
   if (btn.classList.contains('f-region-remove')) return removeRegion(btn.dataset.code);
   if (btn.classList.contains('f-addtag')) return addTagFromInput();
   if (btn.classList.contains('f-cancel')) {
     editor = null;
-    return renderStationsPanel();
+    return renderEditor();
   }
   if (btn.classList.contains('f-save')) return void submitEditor(false);
   if (btn.classList.contains('f-saverestart')) return void submitEditor(true);
@@ -1003,7 +1025,7 @@ function onPanelChange(e) {
   if (!editor) return;
   if (t.classList.contains('f-kind')) {
     editor.kind = t.value;
-    return renderStationsPanel();
+    return renderEditor();
   }
   if (t.classList.contains('f-popularity')) editor.popularity = t.value;
   if (t.classList.contains('f-sort')) editor.sort = t.value;

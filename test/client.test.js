@@ -143,11 +143,12 @@ function boot(opts = {}) {
   set activeId(id) { activeId = id; },
   // panels.js surface
   renderPanelBar, openPanel, closePanel, healthStripHTML, fmtSpan,
-  loadOwnerStations, renderStationsPanel, loadHistory, renderHistoryPanel,
+  loadOwnerStations, renderEditor, renderSelectionPanel, loadHistory, renderHistoryPanel,
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onPanelChange,
-  loadTaste, renderTastePanel, openNewStationFlow,
+  loadTaste, renderTastePanel, openNewStationFlow, openStationEditorById, closeEditor,
+  get inlineEditorId() { return inlineEditorId; },
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
   get vocab() { return vocab; },
@@ -463,24 +464,26 @@ test('capabilities: old server (/health 404) shows no owner panels, no strip', a
   assert.ok(!els.panelbar.innerHTML.includes('data-panel="stations"'), 'no stations button');
   assert.ok(!els.panelbar.innerHTML.includes('class="health"'), 'no strip');
   // openPanel refuses a gated panel outright — no half-open owner UI.
-  await t.openPanel('stations');
+  await t.openPanel('selection');
   assert.strictEqual(t.activePanel, null);
 });
 
-test('capabilities: new server + owner key → stations button and health strip', async () => {
+test('capabilities: new server + owner key → health strip, and no stations button', async () => {
   const { t, els } = ownerBoot();
   await settle();
   assert.deepStrictEqual(t.capabilities, ['health', 'stations', 'vocab']);
   t.renderPanelBar();
   const bar = els.panelbar.innerHTML;
-  assert.ok(bar.includes('data-panel="stations"'), 'stations button');
+  // Per-station management lives in the cards now; the bar keeps only
+  // what could never belong to one station.
+  assert.ok(!bar.includes('data-panel="stations"'), 'no stations button on the bar');
   assert.ok(bar.includes('on air'), 'on-air strip');
   assert.ok(bar.includes('up 3d 4h'), 'uptime labeled');
   assert.ok(bar.includes('2 stations live'), 'broadcasting count spelled out');
   assert.ok(bar.includes('gap 6m'), 'most recent gap');
 });
 
-test('capabilities: guest never sees the stations panel even when the server has it', async () => {
+test('capabilities: guest gets no owner surface even when the server has it', async () => {
   const { t, els } = boot({
     fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
   });
@@ -490,32 +493,35 @@ test('capabilities: guest never sees the stations panel even when the server has
   assert.ok(els.panelbar.innerHTML.includes('class="health"'), 'strip is public');
 });
 
-test('stations panel: 503 shows "catalogue unavailable" instead of hiding', async () => {
+test('roster: a 503 says "catalogue unavailable" above the grid, it does not hide it', async () => {
   const { t, els } = ownerBoot({
     '/stations/list': () => ({
       status: 503, body: { status: 'error', message: 'catalogue unavailable' },
     }),
   });
   await settle();
-  await t.openPanel('stations');
-  assert.strictEqual(els.panel.hidden, false, 'panel stays visible');
-  assert.ok(els.panel.innerHTML.includes('catalogue unavailable'));
+  t.adoptNow(payload(trackA));
+  await settle();
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('catalogue unavailable'), 'the reason is on screen');
+  assert.ok(html.includes('One'), 'and what IS broadcasting still renders');
 });
 
-test('stations panel: lists idle + live, playlist rows are read-only', async () => {
+test('grid: the owner sees idle stations as cards too, playlists read-only', async () => {
   const { t, els } = ownerBoot({
     '/stations/list': () => ({ status: 200, body: { stations: [srvNTS, srvPlaylist] } }),
   });
   await settle();
-  await t.openPanel('stations');
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('NTS Dub') && html.includes('Mixtape'), 'both rows');
-  assert.ok(html.includes('>Stop<'), 'live station offers Stop');
-  assert.ok(html.includes('>Start<'), 'idle station offers Start');
-  assert.ok(html.includes('12 tracks'), 'playlist projected to a count');
-  // One Edit and one Delete — the playlist row gets neither.
-  assert.strictEqual((html.match(/s-delete/g) || []).length, 1);
-  assert.strictEqual((html.match(/s-edit/g) || []).length, 1);
+  t.adoptNow(payload(trackA));
+  await settle();
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('NTS Dub') && html.includes('Mixtape'), 'both stations are cards');
+  assert.ok(html.includes('12 tracks'), 'playlist projected to a count, never its files');
+  // The ✎ belongs to the editable station only — playlists are desktop-managed.
+  // Every editable card carries a ✎ — the idle NTS station and the live
+  // one — while the playlist card carries none.
+  assert.strictEqual((html.match(/act--edit/g) || []).length, 2, 'edit on the editable cards only');
+  assert.ok(html.includes('station--new'), 'and the ghost card closes the grid');
 });
 
 test('SSE stations event re-fetches the owner list while the panel is open', async () => {
@@ -525,7 +531,7 @@ test('SSE stations event re-fetches the owner list while the panel is open', asy
   await settle();
   const es = FakeEventSource.instances[0];
   es.open();
-  await t.openPanel('stations');
+  await t.openPanel('selection');
   const listCalls = () =>
     state.fetchCalls.filter(([u]) => String(u).includes('/stations/list')).length;
   const before = listCalls();
@@ -700,7 +706,7 @@ const changeEvt = (cls, props) => ({
   target: { classList: { contains: (c) => c === cls }, closest: () => null, ...props },
 });
 
-test('capabilities: taste button and Selection section gate per capability; why is gone', async () => {
+test('capabilities: taste and Selection gate per capability; why is gone', async () => {
   // Full v2 server + owner key: taste renders; the why button is gone
   // even though the server still advertises `exclusions`.
   const full = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
@@ -711,8 +717,9 @@ test('capabilities: taste button and Selection section gate per capability; why 
   assert.ok(!bar.includes('data-panel="why"'), 'no why button despite the exclusions capability');
   await full.t.openPanel('why');
   assert.strictEqual(full.t.activePanel, null, 'why panel no longer exists');
-  await full.t.openPanel('stations');
-  assert.ok(full.els.panel.innerHTML.includes('Selection'), 'policy rides the stations panel');
+  await full.t.openPanel('selection');
+  assert.ok(full.els.panelbar.innerHTML.includes('data-panel="selection"'), 'Selection has its own button');
+  assert.ok(full.els.panel.innerHTML.includes('pol-share'), 'and the dial lives there');
 
   // Same server, no key: guests get none of it, and openPanel refuses.
   const guest = boot({ fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }) });
@@ -731,14 +738,14 @@ test('capabilities: taste button and Selection section gate per capability; why 
   v1.t.renderPanelBar();
   assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="taste"'));
   assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="why"'));
-  await v1.t.openPanel('stations');
-  assert.ok(!v1.els.panel.innerHTML.includes('Selection'), 'no policy section without the capability');
+  await v1.t.openPanel('selection');
+  assert.strictEqual(v1.t.activePanel, null, 'no Selection panel without the policy capability');
 });
 
-test('policy: /policy/get lands with the stations open — dial, read-only duration, honest copy', async () => {
+test('policy: /policy/get lands with the Selection panel — dial, read-only duration, honest copy', async () => {
   const { t, els, state } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
-  await t.openPanel('stations');
+  await t.openPanel('selection');
   const gets = state.fetchCalls.filter(([u]) => String(u).includes('/policy/get'));
   assert.strictEqual(gets.length, 1, 'one get per open');
   assert.deepStrictEqual(JSON.parse(gets[0][1].body), { token: 'valid' });
@@ -755,7 +762,7 @@ test('policy: each control sends only its own key — absent means untouched, nu
   const sets = [];
   const { t, els } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes(sets)) });
   await settle();
-  await t.openPanel('stations');
+  await t.openPanel('selection');
 
   // Mix-set toggle: excludeMixSets alone — an untouched dial must not
   // ride along (absent = leave alone on the server's double optional).
@@ -791,7 +798,7 @@ test('policy: a refused set (503) reverts the optimistic patch', async () => {
     fetchImpl: routed(policyRoutes(sets, { setStatus: 503 })),
   });
   await settle();
-  await t.openPanel('stations');
+  await t.openPanel('selection');
   t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
   assert.strictEqual(t.policy.excludeMixSets, true, 'optimistic flip');
   await settle();
@@ -979,6 +986,43 @@ test('new-station card: guests never see it, and it never starts audio', async (
   assert.equal(els.stations.style.getPropertyValue('--count'), '1', 'grid counts stations only');
 });
 
+test('inline editor: the ✎ opens the form inside its own card, not a panel', async () => {
+  const { t, els } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [srvNTS] } }),
+    '/vocab': () => ({ status: 200, body: V3_VOCAB }),
+  });
+  await settle();
+  t.adoptNow({ stations: [] });
+  await settle();
+  await t.openStationEditorById(srvNTS.id);
+  await settle();
+  assert.equal(t.inlineEditorId, srvNTS.id, 'the card owns the open editor');
+  assert.ok(els.stations.innerHTML.includes('class="editor"'), 'the form is in the grid');
+  assert.strictEqual(els.panel.innerHTML, '', 'and no panel was opened for it');
+  t.closeEditor();
+  assert.equal(t.inlineEditorId, null, 'closing hands the grid back');
+  assert.ok(!els.stations.innerHTML.includes('class="editor"'), 'form gone');
+});
+
+test('inline editor: an arriving frame must not repaint the form out from under you', async () => {
+  const { t, els } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [srvNTS] } }),
+    '/vocab': () => ({ status: 200, body: V3_VOCAB }),
+  });
+  await settle();
+  t.adoptNow({ stations: [] });
+  await settle();
+  await t.openStationEditorById(srvNTS.id);
+  await settle();
+  // Stand in for a caret: something only present in the live DOM, which
+  // a wholesale rebuild of #stations would throw away.
+  els.stations.innerHTML += '<!--caret-->';
+  t.adoptNow(payload(trackA));   // the poll/SSE frame that used to eat it
+  assert.ok(els.stations.innerHTML.includes('<!--caret-->'), 'grid stayed frozen');
+  t.closeEditor();
+  assert.ok(!els.stations.innerHTML.includes('<!--caret-->'), 'and repaints once closed');
+});
+
 test('shortBio cuts long text at a sentence, short text untouched', ({ t }) => {
   assert.equal(t.shortBio('One sentence.'), 'One sentence.');
   const long = `${'A'.repeat(200)}. ${'B'.repeat(200)}.`;
@@ -1020,16 +1064,17 @@ const srvLibrary = {
 test('libraryRadio: kind picker offered only when vocab.kinds includes it', async () => {
   const { t, els } = ownerBoot();
   await settle();
-  await t.openPanel('stations');
+  t.adoptNow(payload(trackA));
   // v2 server: the kind never appears — its create would 422.
+  await t.openNewStationFlow();
   t.vocab = V2_VOCAB;
   t.editor = t.newEditor('nts');
-  t.renderStationsPanel();
-  assert.ok(!els.panel.innerHTML.includes('libraryRadio'), 'v2 vocab: not offered');
+  t.renderEditor();
+  assert.ok(!els.stations.innerHTML.includes('libraryRadio'), 'v2 vocab: not offered');
   // v3 server: offered, labeled "Library radio".
   t.vocab = V3_VOCAB;
-  t.renderStationsPanel();
-  const html = els.panel.innerHTML;
+  t.renderEditor();
+  const html = els.stations.innerHTML;
   assert.ok(html.includes('value="libraryRadio"'), 'v3 vocab: option present');
   assert.ok(html.includes('>Library radio<'), 'labeled');
 });
@@ -1037,11 +1082,12 @@ test('libraryRadio: kind picker offered only when vocab.kinds includes it', asyn
 test('libraryRadio: editor shows query + shuffle only — no exploration, no sort, no exclude-owned', async () => {
   const { t, els } = ownerBoot();
   await settle();
-  await t.openPanel('stations');
+  t.adoptNow(payload(trackA));
+  await t.openNewStationFlow();
   t.vocab = V3_VOCAB;
   t.editor = t.newEditor('libraryRadio');
-  t.renderStationsPanel();
-  const html = els.panel.innerHTML;
+  t.renderEditor();
+  const html = els.stations.innerHTML;
   assert.ok(!html.includes('f-exploration'), 'no exploration slider');
   assert.ok(!html.includes('f-sort'), 'no sort select');
   assert.ok(!html.includes('f-excludeowned'), 'no exclude-owned checkbox');
@@ -1086,18 +1132,17 @@ test('libraryRadio: list payload round-trips into an update body of name/query/s
   });
 });
 
-test('libraryRadio: stations-panel badge and now-playing origin badge', async () => {
+test('libraryRadio: card badge and now-playing origin badge', async () => {
   const { t, els } = ownerBoot({
     '/stations/list': () => ({ status: 200, body: { stations: [srvLibrary] } }),
   });
   await settle();
-  await t.openPanel('stations');
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('>Library radio<'), 'kind badge labeled');
-  assert.ok(html.includes('s-edit') && html.includes('s-delete'),
-    'libraryRadio rows are editable, unlike playlist');
+  t.adoptNow({ stations: [] });
+  await settle();
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('Library radio'), 'kind badge labeled on the card');
+  assert.ok(html.includes('act--edit'), 'libraryRadio is editable, unlike playlist');
   // Origin "library" on the active card maps through ORIGIN_LABELS.
-  t.closePanel();
   t.activeId = 'S1';
   t.adoptNow(payload({ ...trackA, origin: 'library' }));
   assert.ok(els.stations.innerHTML.includes('>Library<'), 'origin badge mapped');
