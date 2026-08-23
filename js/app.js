@@ -142,6 +142,105 @@ const $audio = document.getElementById('audio');
 const $lock = document.getElementById('lock');
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+// Region names are localized in the browser — the wire carries bare ISO
+// codes and Intl.DisplayNames turns "JP" into "Japan" in the viewer's
+// own language. Falls back to the raw code where the API is missing.
+// Lives here, not in panels.js, because the cards render places too.
+const regionName = (() => {
+  try {
+    const dn = new Intl.DisplayNames(undefined, { type: 'region' });
+    return (code) => { try { return dn.of(code) || code; } catch { return code; } };
+  } catch { return (code) => code; }
+})();
+
+// "1.2M", "45.3K" — listener and play counts compacted to a glance.
+function fmtCount(n) {
+  if (n == null || isNaN(n)) return '';
+  const one = (x) => {
+    const v = x.toFixed(1);
+    return v.endsWith('.0') ? v.slice(0, -2) : v;
+  };
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `${one(n / 1e9)}B`;
+  if (abs >= 1e6) return `${one(n / 1e6)}M`;
+  if (abs >= 1e3) return `${one(n / 1e3)}K`;
+  return String(n);
+}
+
+// --- Track enrichment, written straight onto the card -----------------
+// GET /trackinfo is public and answers only for a station's CURRENT
+// track. Enrichment moves at the speed of discographies, not seconds,
+// so results are cached by artist|title for the life of the page.
+const trackinfoCache = new Map();
+// What we have already asked for, and when. Two reasons to remember:
+// render() runs every couple of seconds (no stampede), and the server
+// answers for what is current while the card may still be showing the
+// previous track through the display lag — that answer gets cached
+// under ITS own key, leaving ours unfilled, so the ask must expire
+// rather than repeat forever.
+const trackinfoAsked = new Map();
+const TRACKINFO_RETRY_MS = 30000;
+
+const trackInfoKey = (t) => (t && t.artist && t.title ? `${t.artist}|${t.title}` : '');
+
+function ensureTrackInfo(stationId, t) {
+  const key = trackInfoKey(t);
+  if (!key || !capabilities.includes('trackinfo')) return;
+  if (trackinfoCache.has(key)) return;
+  const asked = trackinfoAsked.get(key);
+  if (asked && Date.now() - asked < TRACKINFO_RETRY_MS) return;
+  trackinfoAsked.set(key, Date.now());
+  apiGet(`/trackinfo?station=${encodeURIComponent(stationId)}`)
+    .then(({ ok, data }) => {
+      if (!ok || !data) return;
+      // Key on what came back, never on what we asked for.
+      const k = trackInfoKey(data);
+      if (!k) return;
+      trackinfoCache.set(k, data);
+      render();
+    })
+    .catch(() => {});
+}
+
+// The bio the server sends is capped at ~1200 chars for a panel; a card
+// wants a paragraph you can take in at a glance. Cut at the last
+// sentence end that fits, else the last word.
+function shortBio(text, cap = 260) {
+  const s = String(text || '').trim();
+  if (s.length <= cap) return s;
+  const head = s.slice(0, cap);
+  const stop = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
+  if (stop > cap * 0.5) return head.slice(0, stop + 1);
+  const space = head.lastIndexOf(' ');
+  return `${head.slice(0, space > 0 ? space : cap)}…`;
+}
+
+// Everything the broadcaster knows about the track on air, as quiet
+// lines under the title. Explicit-null tolerant: each row assembles
+// from the fields that are actually there and is dropped entirely when
+// none are, so a keyless broadcaster simply shows nothing extra.
+function trackInfoHTML(t) {
+  const d = trackinfoCache.get(trackInfoKey(t));
+  if (!d) return '';
+  const a = d.artistInfo || {};
+  const tr = d.trackInfo || {};
+  const facts = [];
+  if (a.country) facts.push(regionName(a.country));
+  if (tr.firstReleaseYear != null) facts.push(`first release ${tr.firstReleaseYear}`);
+  if (a.listeners != null) facts.push(`${fmtCount(a.listeners)} listeners`);
+  else if (a.playcount != null) facts.push(`${fmtCount(a.playcount)} plays`);
+  const tags = (a.tags || []).filter(Boolean).slice(0, 4).join(' · ');
+  const similar = (a.similar || []).filter(Boolean).slice(0, 4).join(', ');
+  const bio = shortBio(a.bio || tr.wiki);
+  const rows = [
+    facts.length ? `<div class="tifacts">${escapeHtml(facts.join(' · '))}</div>` : '',
+    tags ? `<div class="titags">${escapeHtml(tags)}</div>` : '',
+    bio ? `<div class="tibio">${escapeHtml(bio)}</div>` : '',
+    similar ? `<div class="tisim">Similar: ${escapeHtml(similar)}</div>` : '',
+  ].filter(Boolean).join('');
+  return rows ? `<div class="trackinfo">${rows}</div>` : '';
+}
+
 // A station's color is a fact about the station, not a dice roll:
 // hash its id to a hue so "Techno" is the same color on every device,
 // every visit. Saturation/lightness live in CSS, per theme.
@@ -230,10 +329,15 @@ function render() {
     $stations.innerHTML = '<p class="empty">No stations broadcasting right now.</p>';
     return;
   }
-  const [cols, rows] = gridDims(stations.length);
+  // An empty card at the end of the grid is the "add a station" button:
+  // the shape you are about to create, in the place it will appear.
+  // Owner-only, and only once the server advertises station CRUD.
+  const canCreate = !!ownerKey() && capabilities.includes('stations');
+  const cardCount = stations.length + (canCreate ? 1 : 0);
+  const [cols, rows] = gridDims(cardCount);
   $stations.style.setProperty('--cols', cols);
   $stations.style.setProperty('--rows', rows);
-  $stations.style.setProperty('--count', stations.length);
+  $stations.style.setProperty('--count', cardCount);
 
   const playing = !$audio.paused && $audio.readyState >= 3;
   // Loading = user asked to play (audio element has src + isn't paused)
@@ -335,9 +439,6 @@ function render() {
             : ''}
           <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
           ${links(r)}
-          ${capabilities.includes('trackinfo') && r.entryID
-            ? `<button type="button" class="tlink about-link" data-entry="${escapeHtml(r.entryID)}" aria-label="About ${escapeHtml(r.artist)} — ${escapeHtml(r.title)}">about</button>`
-            : ''}
         </li>`).join('');
     const timeline = active && (s.nextTrack || recentRows)
       ? `<div class="timeline">
@@ -351,18 +452,17 @@ function render() {
     const origin = t && t.origin
       ? `<span class="origin">${escapeHtml(ORIGIN_LABELS[t.origin] || t.origin)}</span>`
       : '';
-    // "About this track" rides the provenance row — public on purpose
-    // (guests get to learn about the track too), shown only when the
-    // server advertises the trackinfo capability.
-    const aboutBtn = t && capabilities.includes('trackinfo')
-      ? `<button type="button" class="tlink about-link" aria-label="About ${escapeHtml(t.artist)} — ${escapeHtml(t.title)}">about</button>`
-      : '';
+    // What's known about the track on air, written onto the station
+    // itself — no toggle, no panel, nothing to click. Only the current
+    // track earns it; the recent rows stay a bare list.
+    if (t) ensureTrackInfo(s.id, t);
+    const info = t ? trackInfoHTML(t) : '';
     // The origin badge is provenance and renders on EVERY card with a
     // track — a guest scanning the grid gets to see where each channel
-    // sources from. Links and "about" stay on the active card: you dig
-    // into what you're hearing.
-    const nowLinks = t && (origin || (active && (t.sourceURL || t.youtubeURL || aboutBtn)))
-      ? `<span class="nowlinks">${origin}${active ? links(t) + aboutBtn : ''}</span>`
+    // sources from. Links stay on the active card: you dig into what
+    // you're hearing.
+    const nowLinks = t && (origin || (active && (t.sourceURL || t.youtubeURL)))
+      ? `<span class="nowlinks">${origin}${active ? links(t) : ''}</span>`
       : '';
     // ✎ opens the station editor — never inline UI on the card. The
     // grid stays a radio; management lives in the panel, and the button
@@ -383,7 +483,7 @@ function render() {
           <span class="name">${escapeHtml(s.name)}</span>
           ${editBtn}
         </div>
-        <div class="now">${now}${nowLinks}</div>
+        <div class="now">${now}${nowLinks}${info}</div>
         ${timeline}
         <div class="foot">
           ${actions}
@@ -391,12 +491,12 @@ function render() {
             aria-label="${isPlaying ? 'Pause' : 'Play'}">${ICON_LOADING}${ICON_PLAY}${ICON_PAUSE}</span>
         </div>
       </div>`;
-  }).join('');
-  // The about panel follows what the card SHOWS (the display-lagged
-  // track, not the server's) — poke panels.js after every paint so it
-  // can refetch when the shown track settles onto a new one. Guarded:
-  // render() can fire before panels.js has evaluated.
-  if (typeof onShownTrackChange === 'function') onShownTrackChange();
+  }).join('') + (canCreate
+    ? `<div role="button" tabindex="0" class="station station--new" data-new="1"
+        title="Add a new station" aria-label="Add a new station">
+        <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
+      </div>`
+    : '');
 }
 
 $stations.addEventListener('click', (e) => {
@@ -404,13 +504,9 @@ $stations.addEventListener('click', (e) => {
   if (e.target.closest('a')) return;
   const card = e.target.closest('.station');
   if (!card) return;
-  // "About this track" — a text affordance, not an action; opens the
-  // public info panel (defined in panels.js, guarded: load order).
-  const about = e.target.closest('.about-link');
-  if (about) {
-    if (typeof openAboutPanel === 'function') {
-      openAboutPanel(card.dataset.id, about.dataset.entry || null);
-    }
+  if (card.dataset.new) {
+    // Defined in panels.js — guarded because that file loads second.
+    if (typeof openNewStationFlow === 'function') openNewStationFlow();
     return;
   }
   const act = e.target.closest('.act');
@@ -450,6 +546,10 @@ $stations.addEventListener('keydown', (e) => {
   const card = e.target.closest('.station');
   if (!card || e.target.closest('.act')) return;
   e.preventDefault();
+  if (card.dataset.new) {
+    if (typeof openNewStationFlow === 'function') openNewStationFlow();
+    return;
+  }
   toggle(card.dataset.id, card.dataset.url);
 });
 
