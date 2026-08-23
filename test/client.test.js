@@ -1239,6 +1239,18 @@ test('no tap-to-listen hint anywhere (removed by request)', async () => {
   assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card carries no hint');
 });
 
+test('station accent: hue is deterministic per station id, present on every card', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  const first = els.stations.innerHTML.match(/--accent-h:(\d+)/);
+  assert.ok(first, 'card carries an accent hue');
+  t.render();
+  const second = els.stations.innerHTML.match(/--accent-h:(\d+)/);
+  assert.equal(first[1], second[1], 'same station, same hue across renders');
+  assert.ok(Number(first[1]) >= 0 && Number(first[1]) < 360, 'hue in range');
+});
+
 test('a11y: share carries title+aria, transport glyph is Play/Pause per state', async () => {
   const { t, els } = boot();
   await settle();
