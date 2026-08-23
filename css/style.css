@@ -33,6 +33,10 @@
 }
 
 @media (prefers-color-scheme: dark) {
+  .station {
+    --card-ink: hsl(var(--accent-h, 0) 30% 88%);
+    --hover: color-mix(in oklab, var(--accent) 16%, var(--bg));
+  }
   :root {
     --bg: #000;
     --fg: #f0f0f0;
@@ -100,11 +104,22 @@ main {
      the page reads calm but stations tell apart at a glance. */
   --accent: hsl(var(--accent-h, 0) 60% 58%);
   --card-line: color-mix(in oklab, var(--accent) 45%, var(--border));
+  /* Ink in the card's own hue — dark enough to read as near-black, not
+     so neutral that it reads as grey. Redefining --fg and --muted here
+     tints everything inside the card without touching a single rule
+     that uses them. */
+  --card-ink: hsl(var(--accent-h, 0) 45% 16%);
+  --fg: var(--card-ink);
+  --muted: var(--card-ink);
+  --hover: color-mix(in oklab, var(--accent) 13%, var(--bg));
+  /* Even the on-air light belongs to the station: a red dot on a blue
+     card reads as a fault. The pulse is what says "live", not the hue. */
+  --dot: var(--accent);
+  color: var(--card-ink);
   border: 1px solid var(--card-line);
   background: color-mix(in oklab, var(--accent) 6%, var(--bg));
   border-radius: clamp(18px, 2.5vmin, 26px);
   overflow: hidden;
-  color: var(--fg);
   font: inherit;
   cursor: pointer;
   /* was a <button>; the div needs selection suppressed for double-tap */
@@ -160,16 +175,20 @@ main {
   flex: 1;
 }
 
-/* Centered now-playing block — fills the middle grid row. */
+/* What is playing — the middle grid row, aligned to the card's one left
+   edge like everything else in it. */
 .station .now {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   /* `safe` centers while the block fits and falls back to start-aligned
      the moment it doesn't: plain centering would push the first line
      out past the scroll origin, where it can never be read. */
-  justify-content: safe center;
-  text-align: center;
+  /* Anchored to the foot of its row, so what is playing sits directly
+     above what is known about it instead of floating with a void
+     between them. The air collects under the station's name. */
+  justify-content: safe flex-end;
+  text-align: left;
   gap: 0.3em;
   min-width: 0;
   /* Never clip what's playing. The card is a fixed grid cell, so when
@@ -216,11 +235,11 @@ main {
   gap: 0.3rem 2rem;
   align-items: start;
   text-align: left;
-  /* A measure, and centred as a block: on a wide card, columns pinned to
-     the far edges read as two unrelated things. The hairline says what
-     the band is — below this line is about the music, not the music. */
+  /* Capped, not centred: it starts at the card's left edge with
+     everything else, and stops before the columns drift so far apart
+     that they read as two unrelated things. The hairline says what the
+     band is — below this line is about the music, not the music. */
   max-width: min(60rem, 100%);
-  margin-inline: auto;
   padding-top: 0.8rem;
   border-top: 1px solid var(--card-line);
   color: var(--muted);
