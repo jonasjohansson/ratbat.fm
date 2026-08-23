@@ -74,7 +74,7 @@ function boot(opts = {}) {
   FakeEventSource.instances = [];
   const els = {
     stations: makeEl(), audio: makeEl(), lock: makeEl(),
-    panelbar: makeEl(), panel: makeEl(), dlg: makeEl(),
+    topbar: makeEl(), history: makeEl(), dlg: makeEl(),
   };
   const state = {
     nowMs: 0,
@@ -142,12 +142,12 @@ function boot(opts = {}) {
   get pollFailures() { return pollFailures; },
   set activeId(id) { activeId = id; },
   // panels.js surface
-  renderPanelBar, openPanel, closePanel, healthStripHTML, fmtSpan,
-  loadOwnerStations, renderEditor, renderSelectionPanel, loadHistory, renderHistoryPanel,
+  renderTopbar, policyRowHTML, renderHistorySection, healthStripHTML, fmtSpan,
+  loadOwnerStations, renderEditor, loadHistory,
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onPanelChange,
-  loadTaste, renderTastePanel, openNewStationFlow, openStationEditorById, closeEditor,
+  openNewStationFlow, openStationEditorById, closeEditor,
   get inlineEditorId() { return inlineEditorId; },
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
@@ -452,28 +452,25 @@ const ownerBoot = (extraRoutes = {}) => boot({
   }),
 });
 
-test('capabilities: old server (/health 404) shows no owner panels, no strip', async () => {
+test('capabilities: old server (/health 404) shows no strip and no selection row', async () => {
   const { t, els } = boot({
     storedKey: 'valid',
     fetchImpl: routed({ '/health': () => ({ status: 404, body: {} }) }),
   });
   await settle();
   assert.deepStrictEqual(wire(t.capabilities), []);
-  t.renderPanelBar();
-  assert.ok(els.panelbar.innerHTML.includes('data-panel="history"'), 'history stays');
-  assert.ok(!els.panelbar.innerHTML.includes('data-panel="stations"'), 'no stations button');
-  assert.ok(!els.panelbar.innerHTML.includes('class="health"'), 'no strip');
-  // openPanel refuses a gated panel outright — no half-open owner UI.
-  await t.openPanel('selection');
-  assert.strictEqual(t.activePanel, null);
+  t.renderTopbar();
+  assert.ok(!els.topbar.innerHTML.includes('class="health"'), 'no strip');
+  assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'no selection row');
+  assert.ok(els.history.innerHTML.includes('Play history'), 'history section still stands');
 });
 
 test('capabilities: new server + owner key → health strip, and no stations button', async () => {
   const { t, els } = ownerBoot();
   await settle();
   assert.deepStrictEqual(t.capabilities, ['health', 'stations', 'vocab']);
-  t.renderPanelBar();
-  const bar = els.panelbar.innerHTML;
+  t.renderTopbar();
+  const bar = els.topbar.innerHTML;
   // Per-station management lives in the cards now; the bar keeps only
   // what could never belong to one station.
   assert.ok(!bar.includes('data-panel="stations"'), 'no stations button on the bar');
@@ -488,9 +485,9 @@ test('capabilities: guest gets no owner surface even when the server has it', as
     fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
   });
   await settle();
-  t.renderPanelBar();
-  assert.ok(!els.panelbar.innerHTML.includes('data-panel="stations"'));
-  assert.ok(els.panelbar.innerHTML.includes('class="health"'), 'strip is public');
+  t.renderTopbar();
+  assert.ok(!els.topbar.innerHTML.includes('data-panel="stations"'));
+  assert.ok(els.topbar.innerHTML.includes('class="health"'), 'strip is public');
 });
 
 test('roster: a 503 says "catalogue unavailable" above the grid, it does not hide it', async () => {
@@ -531,7 +528,6 @@ test('SSE stations event re-fetches the owner list while the panel is open', asy
   await settle();
   const es = FakeEventSource.instances[0];
   es.open();
-  await t.openPanel('selection');
   const listCalls = () =>
     state.fetchCalls.filter(([u]) => String(u).includes('/stations/list')).length;
   const before = listCalls();
@@ -634,16 +630,15 @@ test('history: More pages accumulate, a short page ends the log', async () => {
     }),
   });
   await settle();
-  await t.openPanel('history');
   assert.strictEqual(t.historyRows.length, 100);
   assert.strictEqual(t.historyDone, false);
-  assert.ok(els.panel.innerHTML.includes('h-more'), 'More button offered');
+  assert.ok(els.history.innerHTML.includes('h-more'), 'More button offered');
   await t.loadHistory(true);
   assert.strictEqual(t.historyRows.length, 140, 'pages accumulate');
   assert.strictEqual(t.historyDone, true, 'short page = end');
   const urls = state.fetchCalls.map(([u]) => String(u)).filter((u) => u.includes('/history'));
   assert.ok(urls[1].includes('offset=100'), `second page offset (${urls[1]})`);
-  assert.ok(!els.panel.innerHTML.includes('h-more'), 'More gone at the end');
+  assert.ok(!els.history.innerHTML.includes('h-more'), 'More gone at the end');
 });
 
 test('history: per-station filter is client-side over accumulated rows', async () => {
@@ -656,15 +651,14 @@ test('history: per-station filter is client-side over accumulated rows', async (
     fetchImpl: routed({ '/history': () => ({ status: 200, body: { entries: rows } }) }),
   });
   await settle();
-  await t.openPanel('history');
-  assert.ok(els.panel.innerHTML.includes('(deleted station)'), 'null name gets a label');
-  const shown = () => (els.panel.innerHTML.match(/class="htrack"/g) || []).length;
+  assert.ok(els.history.innerHTML.includes('(deleted station)'), 'null name gets a label');
+  const shown = () => (els.history.innerHTML.match(/class="htrack"/g) || []).length;
   assert.strictEqual(shown(), 3);
   t.historyFilter = 's2';
-  t.renderHistoryPanel();
+  t.renderHistorySection();
   assert.strictEqual(shown(), 1, 'filter narrows without re-fetching');
   t.historyFilter = null;
-  t.renderHistoryPanel();
+  t.renderHistorySection();
   assert.strictEqual(shown(), 3);
 });
 
@@ -706,50 +700,38 @@ const changeEvt = (cls, props) => ({
   target: { classList: { contains: (c) => c === cls }, closest: () => null, ...props },
 });
 
-test('capabilities: taste and Selection gate per capability; why is gone', async () => {
-  // Full v2 server + owner key: taste renders; the why button is gone
-  // even though the server still advertises `exclusions`.
+test('capabilities: the Selection row gates on policy; taste and why are gone', async () => {
+  // Full server + owner key: the header row carries the dial. Taste and
+  // why no longer exist as surfaces at all.
   const full = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
-  full.t.renderPanelBar();
-  const bar = full.els.panelbar.innerHTML;
-  assert.ok(bar.includes('data-panel="taste"'), 'taste button');
-  assert.ok(!bar.includes('data-panel="why"'), 'no why button despite the exclusions capability');
-  await full.t.openPanel('why');
-  assert.strictEqual(full.t.activePanel, null, 'why panel no longer exists');
-  await full.t.openPanel('selection');
-  assert.ok(full.els.panelbar.innerHTML.includes('data-panel="selection"'), 'Selection has its own button');
-  assert.ok(full.els.panel.innerHTML.includes('pol-share'), 'and the dial lives there');
+  full.t.renderTopbar();
+  const bar = full.els.topbar.innerHTML;
+  assert.ok(bar.includes('pol-share'), 'the dial is on the header row');
+  assert.ok(bar.includes('class="health"'), 'so is the strip');
+  assert.ok(!/taste|why/i.test(bar), 'no taste, no why');
 
-  // Same server, no key: guests get none of it, and openPanel refuses.
+  // Same server, no key: the strip stays public, the controls do not.
   const guest = boot({ fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }) });
   await settle();
-  guest.t.renderPanelBar();
-  assert.ok(!guest.els.panelbar.innerHTML.includes('data-panel="taste"'));
-  assert.ok(!guest.els.panelbar.innerHTML.includes('data-panel="why"'));
-  await guest.t.openPanel('taste');
-  assert.strictEqual(guest.t.activePanel, null);
+  guest.t.renderTopbar();
+  assert.ok(guest.els.topbar.innerHTML.includes('class="health"'), 'strip is public');
+  assert.ok(!guest.els.topbar.innerHTML.includes('pol-share'), 'controls are not');
 
-  // Owner against a v1 server (three capabilities): the stations panel
-  // works but carries no Selection section; taste never renders — each
-  // surface gates on its own string, not on "new server".
+  // Owner against a server without the policy capability: strip only.
   const v1 = ownerBoot();
   await settle();
-  v1.t.renderPanelBar();
-  assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="taste"'));
-  assert.ok(!v1.els.panelbar.innerHTML.includes('data-panel="why"'));
-  await v1.t.openPanel('selection');
-  assert.strictEqual(v1.t.activePanel, null, 'no Selection panel without the policy capability');
+  v1.t.renderTopbar();
+  assert.ok(!v1.els.topbar.innerHTML.includes('pol-share'), 'no dial without the capability');
 });
 
 test('policy: /policy/get lands with the Selection panel — dial, read-only duration, honest copy', async () => {
   const { t, els, state } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
-  await t.openPanel('selection');
   const gets = state.fetchCalls.filter(([u]) => String(u).includes('/policy/get'));
   assert.strictEqual(gets.length, 1, 'one get per open');
   assert.deepStrictEqual(JSON.parse(gets[0][1].body), { token: 'valid' });
-  const html = els.panel.innerHTML;
+  const html = els.topbar.innerHTML;
   assert.ok(html.includes('pol-share'), 'dial rendered');
   assert.ok(html.includes('value="30"'), 'share adopted from the server');
   assert.ok(html.includes('30%'), 'labeled');
@@ -762,7 +744,6 @@ test('policy: each control sends only its own key — absent means untouched, nu
   const sets = [];
   const { t, els } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes(sets)) });
   await settle();
-  await t.openPanel('selection');
 
   // Mix-set toggle: excludeMixSets alone — an untouched dial must not
   // ride along (absent = leave alone on the server's double optional).
@@ -778,7 +759,7 @@ test('policy: each control sends only its own key — absent means untouched, nu
   assert.ok('newMusicShare' in sets[1], 'key present');
   assert.strictEqual(sets[1].newMusicShare, null, 'explicit null = off');
   assert.ok(!('excludeMixSets' in sets[1]), 'toggle not dragged along');
-  assert.ok(els.panel.innerHTML.includes('>off<'), 'off state labeled');
+  assert.ok(els.topbar.innerHTML.includes('>off<'), 'off state labeled');
 
   // Dial back on: restores the remembered share, not zero.
   t.onPanelChange(changeEvt('pol-share-on', { checked: true }));
@@ -798,12 +779,11 @@ test('policy: a refused set (503) reverts the optimistic patch', async () => {
     fetchImpl: routed(policyRoutes(sets, { setStatus: 503 })),
   });
   await settle();
-  await t.openPanel('selection');
   t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
   assert.strictEqual(t.policy.excludeMixSets, true, 'optimistic flip');
   await settle();
   assert.strictEqual(t.policy.excludeMixSets, false, 'reverted on refusal');
-  assert.ok(els.panel.innerHTML.includes('Broadcaster hiccup'), 'note shown');
+  assert.ok(els.topbar.innerHTML.includes('Broadcaster hiccup'), 'note shown');
 });
 
 const TASTE = {
@@ -815,86 +795,20 @@ const TASTE = {
   }],
 };
 
-test('taste: fixture renders as text rows — scores, counts, leanings, no charts', async () => {
-  const { t, els } = boot({
-    storedKey: 'valid',
-    fetchImpl: routed({
-      '/health': () => ({ status: 200, body: FULL_HEALTH }),
-      '/taste': () => ({ status: 200, body: TASTE }),
-    }),
-  });
-  await settle();
-  await t.openPanel('taste');
-  const html = els.panel.innerHTML;
-  assert.ok(html.includes('Prince Far I') && html.includes('92%'), 'artist score as text');
-  assert.ok(html.includes('dub') && html.includes('61%'), 'tag score');
-  assert.ok(html.includes('214 plays · 38 saves · 7 boosts · 91 skips'), 'per-station counts');
-  assert.ok(html.includes('leaning Scientist, King Tubby'), 'top affinity artists');
-  assert.ok(!/<svg|<canvas|<img/.test(html), 'text only');
-});
-
-test('taste: 503 shows the catalogue message instead of a dead panel', async () => {
-  const { t, els } = boot({
-    storedKey: 'valid',
-    fetchImpl: routed({
-      '/health': () => ({ status: 200, body: FULL_HEALTH }),
-      '/taste': () => ({ status: 503, body: { status: 'error', message: 'catalogue unavailable' } }),
-    }),
-  });
-  await settle();
-  await t.openPanel('taste');
-  assert.ok(els.panel.innerHTML.includes('catalogue unavailable'));
-});
-
-test('403 on an owner surface drops the key and closes the panel', async () => {
+test('403 on an owner surface drops the key and takes the owner row with it', async () => {
   const { t, els, state } = boot({
     storedKey: 'valid',
     fetchImpl: routed({
       '/health': () => ({ status: 200, body: FULL_HEALTH }),
-      '/taste': () => ({ status: 403, body: {} }),
+      '/policy/get': () => ({ status: 403, body: {} }),
     }),
   });
   await settle();
-  await t.openPanel('taste');
+  await t.loadPolicy();
   assert.strictEqual(state.store.has('ratbat_key'), false, 'key dropped centrally');
-  assert.strictEqual(t.activePanel, null, 'gate closed the panel');
-  assert.strictEqual(els.panel.hidden, true);
-});
-
-// --- About this track (W7) --------------------------------------------
-
-// /health with the public enrichment capability.
-const TRACKINFO_HEALTH = { ...HEALTH, capabilities: ['health', 'trackinfo'] };
-
-// A fully enriched /trackinfo payload (Last.fm key configured).
-const TRACKINFO = {
-  artist: {
-    name: 'Artist A', city: 'Kingston', country: 'JM',
-    firstReleaseYear: 1976, listeners: 1234567, playcount: 89000000,
-    bio: 'Dub pioneer from the golden era.',
-    tags: ['dub', 'reggae', 'roots'],
-    similar: ['King Tubby', 'Scientist', 'Prince Jammy'],
-  },
-  track: {
-    title: 'Alpha', album: 'LP One', year: 1979, playcount: 45300,
-    wiki: 'Recorded at Channel One in a single take.',
-  },
-};
-
-// A keyless broadcaster: the route answers, every enrichment field null.
-const TRACKINFO_EMPTY = {
-  artist: {
-    name: null, city: null, country: null, firstReleaseYear: null,
-    listeners: null, playcount: null, bio: null, tags: [], similar: [],
-  },
-  track: null,
-};
-
-const trackinfoBoot = (info = TRACKINFO) => boot({
-  fetchImpl: routed({
-    '/health': () => ({ status: 200, body: TRACKINFO_HEALTH }),
-    '/trackinfo': () => ({ status: 200, body: info }),
-  }),
+  t.renderTopbar();
+  assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'owner controls gone with the key');
+  assert.ok(els.topbar.innerHTML.includes('class="health"'), 'public strip stays');
 });
 
 test('fmtCount compacts to K/M/B and passes small numbers through', ({ t }) => {
@@ -998,7 +912,7 @@ test('inline editor: the ✎ opens the form inside its own card, not a panel', a
   await settle();
   assert.equal(t.inlineEditorId, srvNTS.id, 'the card owns the open editor');
   assert.ok(els.stations.innerHTML.includes('class="editor"'), 'the form is in the grid');
-  assert.strictEqual(els.panel.innerHTML, '', 'and no panel was opened for it');
+  assert.ok(!els.topbar.innerHTML.includes('class="editor"'), 'and nothing opened outside the card');
   t.closeEditor();
   assert.equal(t.inlineEditorId, null, 'closing hands the grid back');
   assert.ok(!els.stations.innerHTML.includes('class="editor"'), 'form gone');
@@ -1025,9 +939,9 @@ test('inline editor: an arriving frame must not repaint the form out from under 
 
 test('shortBio cuts long text at a sentence, short text untouched', ({ t }) => {
   assert.equal(t.shortBio('One sentence.'), 'One sentence.');
-  const long = `${'A'.repeat(200)}. ${'B'.repeat(200)}.`;
+  const long = `${'A'.repeat(150)}. ${'B'.repeat(200)}.`;
   const cut = t.shortBio(long);
-  assert.ok(cut.length <= 261, 'capped');
+  assert.ok(cut.length <= 201, 'capped');
   assert.ok(cut.endsWith('.'), 'cut at a sentence end');
 });
 
@@ -1179,7 +1093,7 @@ test('now block: album line suppressed when the album is empty', async () => {
 });
 
 test('origin badge renders on non-active cards; links stay active-only', async () => {
-  const { t, els } = trackinfoBoot();
+  const { t, els } = ownerBoot();
   await settle();
   // Nobody tuned in — the card still says where the track came from.
   t.adoptNow(payload({ ...trackA, sourceURL: 'https://x.example/rel' }));
@@ -1195,23 +1109,25 @@ test('origin badge renders on non-active cards; links stay active-only', async (
   assert.ok(!html.includes('>about<'), 'and no about affordance anywhere');
 });
 
-test('edit pencil: guest never gets it even when the server advertises stations', async () => {
-  // Regression: the pencil must share the owner-action gate — key AND
-  // capability — not render for logged-out guests.
+test('settings affordance: guest never gets it even when the server advertises stations', async () => {
+  // Regression: the way into a station's settings must share the owner
+  // gate — key AND capability — not render for logged-out guests.
   const guest = boot({
     fetchImpl: routed({ '/health': () => ({ status: 200, body: HEALTH }) }),
   });
   await settle();
   assert.ok(guest.t.capabilities.includes('stations'), 'server does advertise stations');
   guest.t.adoptNow(payload(trackA));
-  assert.ok(!guest.els.stations.innerHTML.includes('act--edit'), 'no pencil for guests');
+  assert.ok(!guest.els.stations.innerHTML.includes('act--edit'), 'no settings button for guests');
+  assert.ok(!guest.els.stations.innerHTML.includes('class="setsum"'), 'and no settings summary');
 
   const owner = ownerBoot();
   await settle();
   owner.t.adoptNow(payload(trackA));
   const html = owner.els.stations.innerHTML;
-  assert.ok(html.includes('act--edit'), 'owner gets the pencil');
-  assert.ok(html.includes('title="Edit station" aria-label="Edit station"'), 'labeled');
+  assert.ok(html.includes('act--edit'), 'owner gets the settings button');
+  assert.ok(html.includes('>Settings</button>'), 'named, not a bare glyph');
+  assert.ok(html.includes('title="Station settings"'), 'and titled');
 });
 
 test('health strip: singular/plural station count and "up" before the uptime', async () => {
@@ -1222,32 +1138,28 @@ test('health strip: singular/plural station count and "up" before the uptime', a
   });
   const one = stripBoot(1);
   await settle();
-  one.t.renderPanelBar();
-  assert.ok(one.els.panelbar.innerHTML.includes('● on air · up 3d 4h · 1 station live'),
-    `singular (${one.els.panelbar.innerHTML})`);
+  one.t.renderTopbar();
+  assert.ok(one.els.topbar.innerHTML.includes('● on air · up 3d 4h · 1 station live'),
+    `singular (${one.els.topbar.innerHTML})`);
   const two = stripBoot(2);
   await settle();
-  two.t.renderPanelBar();
-  assert.ok(two.els.panelbar.innerHTML.includes('2 stations live'), 'plural');
+  two.t.renderTopbar();
+  assert.ok(two.els.topbar.innerHTML.includes('2 stations live'), 'plural');
   const off = stripBoot(0);
   await settle();
-  off.t.renderPanelBar();
-  assert.ok(off.els.panelbar.innerHTML.includes('○ off air · up 3d 4h'),
+  off.t.renderTopbar();
+  assert.ok(off.els.topbar.innerHTML.includes('○ off air · up 3d 4h'),
     'off-air keeps its shape with the same up-wording');
 });
 
-test('panel bar: taste button says "Your taste" and buttons carry matching aria-labels', async () => {
-  const { t, els } = boot({
-    storedKey: 'valid',
-    fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }),
-  });
+test('header row: the strip is labeled and the controls carry accessible names', async () => {
+  const full = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
   await settle();
-  t.renderPanelBar();
-  const bar = els.panelbar.innerHTML;
-  assert.ok(bar.includes('>Your taste</button>'), 'renamed label');
-  assert.ok(bar.includes('aria-label="Your taste"'), 'aria matches the text');
-  assert.ok(bar.includes('>Play history</button>'), 'history label unchanged');
-  assert.ok(bar.includes('aria-label="Play history"'));
+  full.t.renderTopbar();
+  const bar = full.els.topbar.innerHTML;
+  assert.ok(bar.includes('title="Broadcaster health"'), 'strip labeled');
+  assert.ok(bar.includes('aria-label="Share of new music"'), 'the dial has a name');
+  assert.ok(bar.includes('New music') && bar.includes('Skip mix sets'), 'both controls read as words');
 });
 
 test('no tap-to-listen hint anywhere (removed by request)', async () => {
