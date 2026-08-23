@@ -676,10 +676,10 @@ function editorHTML(ed) {
           ${kinds.map((k) =>
             `<option value="${escapeHtml(k)}"${ed.kind === k ? ' selected' : ''}>${escapeHtml(KIND_LABELS[k] || k)}</option>`).join('')}
         </select></div>`
-      : `<p class="fkind">${escapeHtml(KIND_LABELS[ed.kind] || ed.kind)} station</p>`}
+      : `<p class="fkind field--wide">${escapeHtml(KIND_LABELS[ed.kind] || ed.kind)} station</p>`}
     <div class="field"><label>Name</label>
       <input type="text" class="f-name" value="${escapeHtml(ed.name)}" autocomplete="off"></div>
-    <div class="field"><label>Tags</label>
+    <div class="field field--wide"><label>Tags</label>
       <div class="chips">${tagChips}</div>
       <div class="frow">
         <input type="text" class="f-newtag" placeholder="Add a tag…" autocomplete="off">
@@ -693,7 +693,7 @@ function editorHTML(ed) {
         <input type="number" class="f-yearmax" placeholder="any" value="${ed.yearMax ?? ''}">
       </div></div>
     ${regionCodes.length || ed.regions.length ? `
-    <div class="field"><label>Regions</label>
+    <div class="field field--wide"><label>Regions</label>
       <div class="chips">${regionChips}</div>
       ${regionOptions
         ? `<select class="f-region-add"><option value="">Add region…</option>${regionOptions}</select>`
@@ -714,7 +714,7 @@ function editorHTML(ed) {
       ${sorts.map((v) =>
         `<option value="${escapeHtml(v)}"${ed.sort === v ? ' selected' : ''}>${escapeHtml(SORT_LABELS[v] || v)}</option>`).join('')}
     </select></div>` : ''}
-    <div class="field">
+    <div class="field field--wide">
       <label class="check"><input type="checkbox" class="f-shuffle"${ed.shufflePool ? ' checked' : ''}> Shuffle the pool</label>
       ${ed.kind === 'libraryRadio'
         // excludeOwnedLibrary is meaningless here (buildQuery sends it
@@ -723,15 +723,15 @@ function editorHTML(ed) {
         ? '<p class="fhint">Library radio plays only tracks you own.</p>'
         : `<label class="check"><input type="checkbox" class="f-excludeowned"${ed.excludeOwnedLibrary ? ' checked' : ''}> Only music I don’t own</label>`}
     </div>
-    ${ed.error ? `<p class="ferror" role="alert">${escapeHtml(ed.error)}</p>` : ''}
-    <div class="frow">
+    ${ed.error ? `<p class="ferror field--wide" role="alert">${escapeHtml(ed.error)}</p>` : ''}
+    <div class="frow field--wide">
       <button type="button" class="btn f-cancel" ${saving}>Cancel</button>
       <button type="button" class="btn btn--primary f-save" ${saving}>${ed.mode === 'create' ? 'Create' : 'Save'}</button>
       ${ed.mode === 'edit' && ed.broadcasting
         ? `<button type="button" class="btn f-saverestart" ${saving}>Save &amp; restart station</button>` : ''}
     </div>
     ${ed.mode === 'edit' && ed.broadcasting
-      ? `<p class="fhint">Restart cuts the track that’s playing for every listener.</p>` : ''}`;
+      ? `<p class="fhint field--wide">Restart cuts the track that’s playing for every listener.</p>` : ''}`;
 }
 
 function toggleTag(tag) {

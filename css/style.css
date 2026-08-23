@@ -34,7 +34,8 @@
 
 @media (prefers-color-scheme: dark) {
   .station {
-    --card-ink: hsl(var(--accent-h, 0) 30% 88%);
+    --card-ink: hsl(var(--accent-h, 0) 45% 82%);
+    --card-ink: oklch(from var(--accent) 0.86 0.09 h);
     --hover: color-mix(in oklab, var(--accent) 16%, var(--bg));
   }
   :root {
@@ -104,11 +105,17 @@ main {
      the page reads calm but stations tell apart at a glance. */
   --accent: hsl(var(--accent-h, 0) 60% 58%);
   --card-line: color-mix(in oklab, var(--accent) 45%, var(--border));
-  /* Ink in the card's own hue — dark enough to read as near-black, not
-     so neutral that it reads as grey. Redefining --fg and --muted here
-     tints everything inside the card without touching a single rule
-     that uses them. */
-  --card-ink: hsl(var(--accent-h, 0) 45% 16%);
+  /* Ink in the card's own colour, and visibly so. Two declarations on
+     purpose: the hsl() fallback works everywhere, and the relative
+     oklch() takes the accent's exact hue while forcing a perceptual
+     lightness. That second part matters — a fixed hsl() lightness is
+     far darker at red than at yellow, so one number cannot stay legible
+     across every hue a station might hash to. oklch's L is perceptual,
+     so every station lands at the same readable depth.
+     Redefining --fg and --muted here tints everything inside the card
+     without touching a single rule that uses them. */
+  --card-ink: hsl(var(--accent-h, 0) 55% 26%);
+  --card-ink: oklch(from var(--accent) 0.40 0.12 h);
   --fg: var(--card-ink);
   --muted: var(--card-ink);
   --hover: color-mix(in oklab, var(--accent) 13%, var(--bg));
@@ -141,8 +148,10 @@ main {
   outline-offset: -4px;
 }
 .station.active {
-  background: var(--active);
-  border-color: var(--border-strong);
+  /* Deeper in the station's OWN colour, never a neutral highlight: the
+     card you are listening to must not stop looking like that station. */
+  background: color-mix(in oklab, var(--accent) 18%, var(--bg));
+  border-color: color-mix(in oklab, var(--accent) 75%, var(--border));
 }
 
 .station .head {
@@ -795,15 +804,21 @@ main.editing .station .now { overflow: visible; }
 
 .station--editing { overflow: visible; }
 .station .editor {
+  /* Fills the card and flows: one column on a phone, as many as fit on
+     a wide card. auto-fit means the form answers to the card's width
+     rather than to a breakpoint someone guessed. */
   display: grid;
-  gap: 0.7rem;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.8rem 1.6rem;
+  align-items: start;
   width: 100%;
-  max-width: 34rem;
-  margin-inline: auto;
   text-align: left;
   font-size: var(--fs-meta);
 }
-.station .editor .field { display: grid; gap: 0.3rem; }
+/* Chips, checkboxes, errors and the actions read across the whole card. */
+.station .editor .field--wide { grid-column: 1 / -1; }
+.station .editor .field { display: grid; gap: 0.3rem; align-content: start; }
+.station .editor .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .station .editor label { color: var(--muted); }
 .station .editor input[type="text"],
 .station .editor input[type="number"],
@@ -822,6 +837,16 @@ main.editing .station .now { overflow: visible; }
   align-items: center;
   gap: 0.4rem 0.6rem;
 }
+/* Inside a row, an input shares the line instead of claiming it: "add a
+   tag" belongs beside its button, and an era is a pair of years with a
+   dash between them, not two stacked fields. */
+.station .editor .frow input[type="text"],
+.station .editor .frow input[type="number"] {
+  width: auto;
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+.station .editor .frow .btn { flex: 0 0 auto; }
 .station .editor .check { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 .station .editor .fhint { margin: 0; color: var(--muted); opacity: 0.8; }
 .station .editor .ferror { margin: 0; color: var(--danger); }
