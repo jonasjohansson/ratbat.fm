@@ -278,24 +278,29 @@ function stationHue(id) {
 
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
+// Icons are drawn, not filled: a hairline stroke reads as a mark rather
+// than a blob, and they take the card's own line colour (see --card-line)
+// so the chrome is one family with the border around it. The filled
+// heart is the exception — a filled heart IS the saved state.
+const ICON_STROKE = 'fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"';
 const ICON_PLAY =
-  '<svg class="icon icon--play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5v14l12-7z"/></svg>';
+  `<svg class="icon icon--play" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M8.5 5.8v12.4L19 12z"/></svg>`;
 const ICON_PAUSE =
-  '<svg class="icon icon--pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+  `<svg class="icon icon--pause" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M9.25 5.5v13M14.75 5.5v13"/></svg>`;
 const ICON_LOADING =
-  '<svg class="icon icon--loading" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="42" stroke-dashoffset="28"/></svg>';
+  `<svg class="icon icon--loading" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" ${ICON_STROKE} stroke-dasharray="42" stroke-dashoffset="28"/></svg>`;
 const ICON_HEART =
-  '<svg class="icon icon--heart" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>';
+  `<svg class="icon icon--heart" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>`;
 const ICON_HEART_FILLED =
   '<svg class="icon icon--heart-filled" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 20.5C7 16.5 3.5 13.2 3.5 9.4 3.5 6.9 5.4 5 7.9 5c1.6 0 3.1.8 4.1 2.2C13 5.8 14.5 5 16.1 5c2.5 0 4.4 1.9 4.4 4.4 0 3.8-3.5 7.1-8.5 11.1z"/></svg>';
 const ICON_THUMBSDOWN =
-  '<svg class="icon icon--skip" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M16 3H7.5L5 11v2h6l-1 5.5 1.5 1.5 4.5-7V3zm0 0h3v10h-3"/></svg>';
+  `<svg class="icon icon--skip" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M16 3H7.5L5 11v2h6l-1 5.5 1.5 1.5 4.5-7V3zm0 0h3v10h-3"/></svg>`;
 const ICON_NEXT =
-  '<svg class="icon icon--next" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 5v14l8-7zM16 5h2v14h-2z"/></svg>';
+  `<svg class="icon icon--next" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M7 5.8v12.4L16 12zM17.75 5.5v13"/></svg>`;
 const ICON_BOOST =
-  '<svg class="icon icon--boost" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 13l6-6 6 6M6 19l6-6 6 6"/></svg>';
+  `<svg class="icon icon--boost" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M6 13l6-6 6 6M6 19l6-6 6 6"/></svg>`;
 const ICON_SHARE =
-  '<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>';
+  `<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>`;
 
 // Grid geometry — aims for the shape Jonas described:
 // 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
@@ -520,18 +525,6 @@ function render() {
   renderGrid();
 }
 
-// The now-playing block fades at its bottom edge to say "there is more
-// below". Only CSS can draw it and only layout can know whether it is
-// true — a centered block with nothing to scroll to would otherwise
-// fade its own last line for no reason. So: measure after each paint.
-function markScrollableBlocks() {
-  if (!$stations.querySelectorAll) return;
-  $stations.querySelectorAll('.now').forEach((el) => {
-    if (!el.classList || typeof el.classList.toggle !== 'function') return;
-    el.classList.toggle('more-below', el.scrollHeight > el.clientHeight + 1);
-  });
-}
-
 function renderGrid() {
   // A form is taller than a now-playing line. While one is open the grid
   // drops its one-screen discipline and lets the cards size to their
@@ -729,7 +722,6 @@ function renderGrid() {
           <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
         </div>`)
     : '');
-  markScrollableBlocks();
 }
 
 // The inline editor lives inside #stations, so the grid's own listeners
