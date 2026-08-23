@@ -1053,12 +1053,21 @@ async function sendAction(id, kind, entry) {
 
 async function toggle(id, url) {
   if (activeId === id) {
-    if ($audio.paused) { try { await $audio.play(); } catch {} }
-    else $audio.pause();
+    if ($audio.paused) {
+      wantsAudio = true;
+      try { await $audio.play(); } catch {}
+    } else {
+      // An explicit pause is the one thing the watchdog must respect.
+      wantsAudio = false;
+      $audio.pause();
+    }
     render();
     return;
   }
   activeId = id;
+  activeURL = url;
+  wantsAudio = true;
+  reconnectAttempts = 0;
   $audio.src = url;
   try { await $audio.play(); } catch { /* autoplay policy — user will retap */ }
   render();
@@ -1067,10 +1076,91 @@ async function toggle(id, url) {
 
 function stop() {
   activeId = null;
+  activeURL = null;
+  wantsAudio = false;
+  cancelReconnect();
   $audio.pause();
   $audio.removeAttribute('src');
   $audio.load();
 }
+
+// --- Keeping the stream alive -----------------------------------------
+//
+// A live stream is not a file: it ends whenever the broadcaster restarts,
+// the tunnel blips, or the network coughs. The page used to treat all of
+// that as "the user stopped listening" — it rendered a paused card and
+// waited, so an iMac left playing would be silent hours later with no
+// sign of why.
+//
+// So: remember whether the listener WANTS audio, and if the element
+// stops while they do, reconnect. Backoff because the broadcaster may be
+// mid-restart, and a cache-buster because a dead stream URL is exactly
+// the thing a browser is happiest to serve from cache.
+let wantsAudio = false;
+let activeURL = null;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let lastProgressAt = 0;
+
+const RECONNECT_CAP_MS = 30000;
+// Long enough that a normal rebuffer resolves itself first; short enough
+// that nobody stands there wondering whether it is coming back.
+const STALL_LIMIT_MS = 20000;
+
+function cancelReconnect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+}
+
+function scheduleReconnect(why) {
+  if (!wantsAudio || !activeURL || reconnectTimer) return;
+  const wait = Math.min(1000 * 2 ** reconnectAttempts, RECONNECT_CAP_MS);
+  reconnectAttempts += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!wantsAudio || !activeURL) return;
+    // A fresh query each time: without it the browser may hand back the
+    // very connection that just died.
+    const sep = activeURL.includes('?') ? '&' : '?';
+    $audio.src = `${activeURL}${sep}r=${reconnectAttempts}-${lastProgressAt}`;
+    $audio.play().catch(() => scheduleReconnect('play refused'));
+    render();
+  }, wait);
+  showNote(activeId, why);
+  render();
+}
+
+// Progress is the only honest proof a stream is alive: `playing` fires
+// before a single byte of audio has to arrive.
+$audio.addEventListener('timeupdate', () => {
+  lastProgressAt = Date.now();
+  if (reconnectAttempts) { reconnectAttempts = 0; cancelReconnect(); }
+});
+
+// The stream ended or broke while the listener still wants it. That is
+// never a normal end for a radio station.
+['ended', 'error'].forEach((ev) => $audio.addEventListener(ev, () => {
+  if (wantsAudio) scheduleReconnect('Reconnecting…');
+}));
+
+// A stall that resolves itself is a rebuffer; one that doesn't is a dead
+// connection wearing a rebuffer's clothes.
+setInterval(() => {
+  if (!wantsAudio || !activeURL || reconnectTimer) return;
+  if (!$audio.paused && $audio.readyState >= 3) return;
+  if (lastProgressAt && Date.now() - lastProgressAt < STALL_LIMIT_MS) return;
+  if (!lastProgressAt) return;
+  scheduleReconnect('Reconnecting…');
+}, 5000);
+
+// Coming back to a sleeping laptop: browsers suspend media in background
+// tabs and some never resume it. If the listener still wants audio and
+// it is not running, get it running.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (wantsAudio && $audio.paused) {
+    $audio.play().catch(() => scheduleReconnect('Reconnecting…'));
+  }
+});
 
 // Open what's being HEARD (the display-lagged track) in a new tab — the
 // real release/video page when the server knows it (listen there, share
