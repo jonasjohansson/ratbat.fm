@@ -257,13 +257,22 @@ function trackInfoHTML(t) {
   const tags = (a.tags || []).filter(Boolean).slice(0, 3).join(' · ');
   const similar = (a.similar || []).filter(Boolean).slice(0, 3).join(', ');
   const bio = shortBio(a.bio || tr.wiki);
-  const rows = [
-    facts.length ? `<div class="tifacts">${escapeHtml(facts.join(' · '))}</div>` : '',
-    tags ? `<div class="titags">${escapeHtml(tags)}</div>` : '',
-    bio ? `<div class="tibio">${escapeHtml(bio)}</div>` : '',
-    similar ? `<div class="tisim">Similar: ${escapeHtml(similar)}</div>` : '',
+  // Column one is the artist in prose — where they are from, then who
+  // they are. Column two is the artist as data. Left-aligned, both:
+  // a centred paragraph makes the eye hunt for every line's start.
+  const who = [
+    facts.length ? `<p class="tifacts">${escapeHtml(facts.join(' · '))}</p>` : '',
+    bio ? `<p class="tibio">${escapeHtml(bio)}</p>` : '',
   ].filter(Boolean).join('');
-  return rows ? `<div class="trackinfo">${rows}</div>` : '';
+  const what = [
+    tags ? `<p class="titags">${escapeHtml(tags)}</p>` : '',
+    similar ? `<p class="tisim">Similar: ${escapeHtml(similar)}</p>` : '',
+  ].filter(Boolean).join('');
+  if (!who && !what) return '';
+  return `<div class="trackinfo">
+    ${who ? `<div class="ticol ticol--who">${who}</div>` : ''}
+    ${what ? `<div class="ticol ticol--what">${what}</div>` : ''}
+  </div>`;
 }
 
 // A station's color is a fact about the station, not a dice roll:
@@ -782,7 +791,8 @@ function renderGrid() {
           ${editBtn}
         </div>
         ${settingsSummaryHTML(s)}
-        <div class="now">${now}${nowLinks}${info}</div>
+        <div class="now">${now}${nowLinks}</div>
+        ${info}
         ${timeline}
         <div class="foot">
           ${actions}
