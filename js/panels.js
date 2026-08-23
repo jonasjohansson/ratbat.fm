@@ -23,6 +23,14 @@
 
 const $dlg = document.getElementById('dlg');
 
+// Where this radio's music actually comes from — the shortcut at the top
+// of the region picker. Ordered by how often they come up here rather
+// than alphabetically: an alphabetical shortlist is just a short list.
+const COMMON_REGIONS = [
+  'SE', 'GB', 'US', 'DE', 'NL', 'FR', 'JP',
+  'DK', 'NO', 'FI', 'IT', 'ES', 'BE', 'PL', 'CA', 'AU', 'BR',
+];
+
 const POPULARITY_LABELS = { hits: 'Hits', middle: 'Middle', deepCuts: 'Deep cuts' };
 const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
 
@@ -660,12 +668,22 @@ function editorHTML(ed) {
     `<button type="button" class="chip on f-region-remove" data-code="${escapeHtml(c)}"
       aria-label="Remove ${escapeHtml(regionName(c))}">${escapeHtml(regionName(c))} ×</button>`).join('');
   const regionCodes = (vocab && vocab.regions) || [];
-  const regionOptions = regionCodes
-    .filter((c) => !ed.regions.includes(c))
+  // 250-odd countries in one alphabetical list means scrolling past
+  // Afghanistan to reach the handful any of these stations ever use.
+  // The common ones ride at the top; the full list stays underneath,
+  // because "common" is a shortcut, never a limit.
+  const opt = (c) => `<option value="${escapeHtml(c)}">${escapeHtml(regionName(c))}</option>`;
+  const free = (c) => !ed.regions.includes(c);
+  const common = COMMON_REGIONS.filter((c) => regionCodes.includes(c)).filter(free);
+  const rest = regionCodes
+    .filter((c) => free(c) && !common.includes(c))
     .map((c) => ({ c, n: regionName(c) }))
     .sort((a, b) => a.n.localeCompare(b.n))
-    .map(({ c, n }) => `<option value="${escapeHtml(c)}">${escapeHtml(n)}</option>`)
-    .join('');
+    .map(({ c }) => c);
+  const regionOptions = [
+    common.length ? `<optgroup label="Common">${common.map(opt).join('')}</optgroup>` : '',
+    rest.length ? `<optgroup label="All">${rest.map(opt).join('')}</optgroup>` : '',
+  ].join('');
   const pops = (vocab && vocab.popularity) || ['hits', 'middle', 'deepCuts'];
   const sorts = (vocab && vocab.bandcampSort) || ['date', 'pop'];
   const saving = ed.saving ? 'disabled' : '';
@@ -729,6 +747,8 @@ function editorHTML(ed) {
       <button type="button" class="btn btn--primary f-save" ${saving}>${ed.mode === 'create' ? 'Create' : 'Save'}</button>
       ${ed.mode === 'edit' && ed.broadcasting
         ? `<button type="button" class="btn f-saverestart" ${saving}>Save &amp; restart station</button>` : ''}
+      ${ed.mode === 'edit'
+        ? `<button type="button" class="btn btn--danger f-delete" ${saving}>Delete station</button>` : ''}
     </div>
     ${ed.mode === 'edit' && ed.broadcasting
       ? `<p class="fhint field--wide">Restart cuts the track that’s playing for every listener.</p>` : ''}`;
@@ -866,23 +886,17 @@ function onStationsChanged() {
 
 // --- Wiring -----------------------------------------------------------
 
-function onPanelClick(e) {
+function onControlClick(e) {
   if (e.target.closest('a')) return;
   const btn = e.target.closest('button');
   if (!btn) return;
   if (btn.classList.contains('vol-mute')) return setVolume(null, !muted);
-  const row = btn.closest('.row');
   // History
   if (btn.classList.contains('h-more')) return void loadHistory(true);
   if (btn.classList.contains('h-filter')) {
     historyFilter = btn.dataset.sid || null;
     return renderHistorySection();
   }
-  // Stations list
-  if (btn.classList.contains('s-new')) return newStationFlow();
-  if (btn.classList.contains('s-startstop') && row) return void startStopStation(row.dataset.id);
-  if (btn.classList.contains('s-edit') && row) return editStationRow(row.dataset.id);
-  if (btn.classList.contains('s-delete') && row) return void deleteStationFlow(row.dataset.id);
   // Editor
   if (btn.classList.contains('f-chip')) return toggleTag(btn.dataset.tag);
   if (btn.classList.contains('f-tagmatch')) {
@@ -891,10 +905,8 @@ function onPanelClick(e) {
   }
   if (btn.classList.contains('f-region-remove')) return removeRegion(btn.dataset.code);
   if (btn.classList.contains('f-addtag')) return addTagFromInput();
-  if (btn.classList.contains('f-cancel')) {
-    editor = null;
-    return renderEditor();
-  }
+  if (btn.classList.contains('f-cancel')) return closeEditor();
+  if (btn.classList.contains('f-delete')) return void deleteStationFlow(editor && editor.id);
   if (btn.classList.contains('f-save')) return void submitEditor(false);
   if (btn.classList.contains('f-saverestart')) return void submitEditor(true);
 }
@@ -902,7 +914,7 @@ function onPanelClick(e) {
 // Text fields sync DOM → state without re-rendering (a re-render per
 // keystroke would drop focus); structural changes (chips, selects)
 // re-render from state.
-function onPanelInput(e) {
+function onControlInput(e) {
   const t = e.target;
   // Policy dial: drag patches the % label in place (a re-render would
   // drop the drag); the commit happens on `change`.
@@ -932,7 +944,7 @@ function onPanelInput(e) {
   }
 }
 
-function onPanelChange(e) {
+function onControlChange(e) {
   const t = e.target;
   const row = t.closest('.row');
   if (t.classList.contains('s-auto') && row) return void toggleAutostart(row.dataset.id);
@@ -960,7 +972,7 @@ function onPanelChange(e) {
   if (t.classList.contains('f-region-add') && t.value) addRegion(t.value);
 }
 
-function onPanelKeydown(e) {
+function onControlKeydown(e) {
   if (e.key !== 'Enter') return;
   if (e.target.classList && e.target.classList.contains('f-newtag')) {
     e.preventDefault();
@@ -971,14 +983,14 @@ function onPanelKeydown(e) {
 // The header row and the history section are always on screen, so each
 // listens on itself. There is no sheet to open, close or escape from.
 if ($topbar) {
-  $topbar.addEventListener('click', onPanelClick);
-  $topbar.addEventListener('input', onPanelInput);
-  $topbar.addEventListener('change', onPanelChange);
+  $topbar.addEventListener('click', onControlClick);
+  $topbar.addEventListener('input', onControlInput);
+  $topbar.addEventListener('change', onControlChange);
   renderTopbar();
 }
 
 if ($historySection) {
-  $historySection.addEventListener('click', onPanelClick);
+  $historySection.addEventListener('click', onControlClick);
   renderHistorySection();
   // Public, and below the fold: fetch it once at boot so scrolling down
   // always lands on something.

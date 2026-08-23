@@ -158,8 +158,8 @@ function boot(opts = {}) {
   loadOwnerStations, renderEditor, loadHistory,
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
-  loadPolicy, setPolicy, policySectionHTML, onPanelChange,
-  openNewStationFlow, openStationEditorById, closeEditor,
+  loadPolicy, setPolicy, policySectionHTML, onControlChange,
+  openNewStationFlow, openStationEditorById, closeEditor, editorHTML, loadVocab,
   get inlineEditorId() { return inlineEditorId; },
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
@@ -705,7 +705,7 @@ const policyRoutes = (sets, opts = {}) => ({
   },
 });
 
-// A change event the way onPanelChange sees one — just enough target to
+// A change event the way onControlChange sees one — just enough target to
 // hit exactly one classList branch.
 const changeEvt = (cls, props) => ({
   target: { classList: { contains: (c) => c === cls }, closest: () => null, ...props },
@@ -756,14 +756,14 @@ test('policy: each control sends only its own key — absent means untouched, nu
 
   // Mix-set toggle: excludeMixSets alone — an untouched dial must not
   // ride along (absent = leave alone on the server's double optional).
-  t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
+  t.onControlChange(changeEvt('pol-mixsets', { checked: true }));
   await settle();
   assert.deepStrictEqual(wire(sets[0]), { token: 'valid', excludeMixSets: true });
   assert.ok(!('newMusicShare' in sets[0]), 'untouched dial absent from the body');
 
   // Dial off: newMusicShare present as an EXPLICIT null — the -1
   // sentinel never leaves the server.
-  t.onPanelChange(changeEvt('pol-share-on', { checked: false }));
+  t.onControlChange(changeEvt('pol-share-on', { checked: false }));
   await settle();
   assert.ok('newMusicShare' in sets[1], 'key present');
   assert.strictEqual(sets[1].newMusicShare, null, 'explicit null = off');
@@ -771,12 +771,12 @@ test('policy: each control sends only its own key — absent means untouched, nu
   assert.ok(els.topbar.innerHTML.includes('>off<'), 'off state labeled');
 
   // Dial back on: restores the remembered share, not zero.
-  t.onPanelChange(changeEvt('pol-share-on', { checked: true }));
+  t.onControlChange(changeEvt('pol-share-on', { checked: true }));
   await settle();
   assert.strictEqual(sets[2].newMusicShare, 0.3);
 
   // Slider commit sends the new share and nothing else.
-  t.onPanelChange(changeEvt('pol-share', { value: '55' }));
+  t.onControlChange(changeEvt('pol-share', { value: '55' }));
   await settle();
   assert.deepStrictEqual(wire(sets[3]), { token: 'valid', newMusicShare: 0.55 });
 });
@@ -788,7 +788,7 @@ test('policy: a refused set (503) reverts the optimistic patch', async () => {
     fetchImpl: routed(policyRoutes(sets, { setStatus: 503 })),
   });
   await settle();
-  t.onPanelChange(changeEvt('pol-mixsets', { checked: true }));
+  t.onControlChange(changeEvt('pol-mixsets', { checked: true }));
   assert.strictEqual(t.policy.excludeMixSets, true, 'optimistic flip');
   await settle();
   assert.strictEqual(t.policy.excludeMixSets, false, 'reverted on refusal');
@@ -978,6 +978,53 @@ test('volume: a browser that refuses the setting is never offered the control', 
   assert.strictEqual(t.detectVolumeSupport(), false, 'detected as unsupported');
   t.volumeSupported = false;
   assert.strictEqual(t.volumeControlHTML(), '', 'so nothing is drawn');
+});
+
+// A synthetic DOM event good enough for delegation: `closest` answers
+// for the selectors the handlers actually ask about.
+const clickEvt = (matches) => ({
+  target: {
+    closest: (sel) => (matches[sel] === undefined ? null : matches[sel]),
+  },
+});
+
+test('regions: the common ones sit above the full list, and never twice', async () => {
+  const { t } = ownerBoot({ '/vocab': () => ({ status: 200, body: { ...V3_VOCAB, regions: ['AF', 'SE', 'GB', 'ZW'] } }) });
+  await settle();
+  await t.loadVocab();
+  t.editor = t.newEditor('nts');
+  const html = t.editorHTML(t.editor);
+  const common = html.indexOf('<optgroup label="Common"');
+  const all = html.indexOf('<optgroup label="All"');
+  assert.ok(common >= 0 && all > common, 'common group comes first');
+  // Sweden appears once, in the shortcut — not again in the full list.
+  assert.strictEqual((html.match(/value="SE"/g) || []).length, 1, 'no duplicates');
+  assert.ok(html.includes('value="AF"'), 'and nothing is dropped');
+});
+
+test('editor: its buttons reach the handler through the grid delegation', async () => {
+  const { t, els } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [srvNTS] } }),
+    '/vocab': () => ({ status: 200, body: V3_VOCAB }),
+  });
+  await settle();
+  t.adoptNow({ stations: [] });
+  await settle();
+  await t.openStationEditorById(srvNTS.id);
+  await settle();
+  assert.equal(t.inlineEditorId, srvNTS.id, 'editor is open');
+
+  // The grid's own click listener is the ONLY path an editor button has.
+  // Calling the panel handlers directly (as every other test here does)
+  // would have hidden the fact that app.js and panels.js disagreed about
+  // what those handlers are called.
+  const onClick = els.stations.handlers.click[0];
+  onClick(clickEvt({
+    a: null,
+    '.editor': { tagName: 'DIV' },
+    button: { classList: { contains: (c) => c === 'f-cancel' }, closest: () => null, dataset: {} },
+  }));
+  assert.equal(t.inlineEditorId, null, 'Cancel closed the editor');
 });
 
 test('stream: a dropped stream reconnects, an intentional pause does not', async () => {

@@ -825,7 +825,7 @@ $stations.addEventListener('click', (e) => {
   if (e.target.closest('a')) return;
   // An open editor is a form, not a play/pause surface.
   if (e.target.closest('.editor')) {
-    if (typeof onEditorClick === 'function') onEditorClick(e);
+    if (typeof onControlClick === 'function') onControlClick(e);
     return;
   }
   const card = e.target.closest('.station');
@@ -881,7 +881,7 @@ $stations.addEventListener('click', (e) => {
 $stations.addEventListener('keydown', (e) => {
   // Typing in the editor must never reach the card's play/pause keys.
   if (e.target.closest && e.target.closest('.editor')) {
-    if (typeof onEditorKeydown === 'function') onEditorKeydown(e);
+    if (typeof onControlKeydown === 'function') onControlKeydown(e);
     return;
   }
   if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -898,12 +898,12 @@ $stations.addEventListener('keydown', (e) => {
 
 $stations.addEventListener('input', (e) => {
   if (!e.target.closest || !e.target.closest('.editor')) return;
-  if (typeof onEditorInput === 'function') onEditorInput(e);
+  if (typeof onControlInput === 'function') onControlInput(e);
 });
 
 $stations.addEventListener('change', (e) => {
   if (!e.target.closest || !e.target.closest('.editor')) return;
-  if (typeof onEditorChange === 'function') onEditorChange(e);
+  if (typeof onControlChange === 'function') onControlChange(e);
 });
 
 // Transient per-station status line ("Saved ♥", "Already in your
