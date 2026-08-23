@@ -1136,6 +1136,15 @@ $audio.addEventListener('timeupdate', () => {
   if (reconnectAttempts) { reconnectAttempts = 0; cancelReconnect(); }
 });
 
+// A pause the page did not ask for — the OS media key, the headphones,
+// the lock screen — is still the listener's intent, and the watchdog
+// must not argue with it. Only a deliberate pause reaches here with the
+// element healthy and full of data; a dying stream pauses with an error
+// set or with its buffer already gone.
+$audio.addEventListener('pause', () => {
+  if (!$audio.error && $audio.readyState >= 3) wantsAudio = false;
+});
+
 // The stream ended or broke while the listener still wants it. That is
 // never a normal end for a radio station.
 ['ended', 'error'].forEach((ev) => $audio.addEventListener(ev, () => {

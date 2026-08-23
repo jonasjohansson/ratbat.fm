@@ -1006,6 +1006,29 @@ test('stream: a dropped stream reconnects, an intentional pause does not', async
     'nothing is scheduled after a real pause');
 });
 
+test('stream: a media-key pause is intent too, a dying stream is not', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  await t.toggle('S1', 'https://radio.example.com/streams/s1');
+
+  // Headphones pulled / media key: the element pauses itself, healthy
+  // and full of data. The watchdog must not drag it back.
+  els.audio.readyState = 4;
+  els.audio.error = null;
+  els.audio.paused = true;
+  els.audio.emit('pause');
+  assert.strictEqual(t.wantsAudio, false, 'an unforced healthy pause is intent');
+
+  // A stream dying also pauses — with nothing buffered. That is a fault.
+  await t.toggle('S1', 'https://radio.example.com/streams/s1');
+  assert.strictEqual(t.wantsAudio, true, 'listening again');
+  els.audio.readyState = 0;
+  els.audio.paused = true;
+  els.audio.emit('pause');
+  assert.strictEqual(t.wantsAudio, true, 'a starved pause is not intent');
+});
+
 test('stream: progress clears the backoff so the next drop retries fast', async () => {
   const { t, els } = boot();
   await settle();
