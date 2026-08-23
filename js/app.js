@@ -142,6 +142,16 @@ const $audio = document.getElementById('audio');
 const $lock = document.getElementById('lock');
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+// A station's color is a fact about the station, not a dice roll:
+// hash its id to a hue so "Techno" is the same color on every device,
+// every visit. Saturation/lightness live in CSS, per theme.
+function stationHue(id) {
+  let h = 5381;
+  const str = String(id || '');
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
 const ICON_PLAY =
@@ -360,13 +370,10 @@ function render() {
     const editBtn = ownerKey() && capabilities.includes('stations')
       ? `<button type="button" class="act act--edit" title="Edit station" aria-label="Edit station">✎</button>`
       : '';
-    // Quiet affordance for guests: only cards you are NOT tuned into
-    // say how to engage. Connecting/buffering cards ARE the active card,
-    // so they never carry it.
-    const hint = active ? '' : '<div class="hint">tap to listen</div>';
     return `
       <div role="button" tabindex="0"
         class="${classes}"
+        style="--accent-h:${stationHue(s.id)}"
         data-id="${escapeHtml(s.id)}"
         data-url="${escapeHtml(s.streamURL || '')}"
         aria-pressed="${active}"
@@ -377,7 +384,6 @@ function render() {
           ${editBtn}
         </div>
         <div class="now">${now}${nowLinks}</div>
-        ${hint}
         ${timeline}
         <div class="foot">
           ${actions}

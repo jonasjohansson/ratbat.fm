@@ -1229,22 +1229,26 @@ test('panel bar: taste button says "Your taste" and buttons carry matching aria-
   assert.ok(bar.includes('aria-label="Play history"'));
 });
 
-test('tap-to-listen hint: on non-active cards only, gone while active or connecting', async () => {
+test('no tap-to-listen hint anywhere (removed by request)', async () => {
   const { t, els } = boot();
   await settle();
   t.adoptNow(payload(trackA));
-  assert.ok(els.stations.innerHTML.includes('>tap to listen<'), 'non-active card hints');
+  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'non-active card carries no hint');
   t.activeId = 'S1';
   t.render();
-  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card does not');
-  // Connecting: src assigned, not paused, no data yet.
-  els.audio.src = 'https://radio.example.com/streams/s1';
-  els.audio.paused = false;
-  els.audio.readyState = 1;
+  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card carries no hint');
+});
+
+test('station accent: hue is deterministic per station id, present on every card', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  const first = els.stations.innerHTML.match(/--accent-h:(\d+)/);
+  assert.ok(first, 'card carries an accent hue');
   t.render();
-  const html = els.stations.innerHTML;
-  assert.ok(html.includes('Connecting…'), 'loading state shown');
-  assert.ok(!html.includes('tap to listen'), 'no hint while connecting');
+  const second = els.stations.innerHTML.match(/--accent-h:(\d+)/);
+  assert.equal(first[1], second[1], 'same station, same hue across renders');
+  assert.ok(Number(first[1]) >= 0 && Number(first[1]) < 360, 'hue in range');
 });
 
 test('a11y: share carries title+aria, transport glyph is Play/Pause per state', async () => {
