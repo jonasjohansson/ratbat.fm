@@ -33,7 +33,11 @@ function makeEl() {
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     setAttribute() {},
     removeAttribute() {},
-    addEventListener() {},
+    // Records listeners so tests can fire real audio events (the stream
+    // watchdog lives on them).
+    handlers: {},
+    addEventListener(name, fn) { (this.handlers[name] = this.handlers[name] || []).push(fn); },
+    emit(name) { (this.handlers[name] || []).forEach((fn) => fn({ target: this })); },
     querySelector: () => null,
     hidden: false,
     // <dialog> surface — no showModal on purpose: the delete confirm
@@ -44,8 +48,10 @@ function makeEl() {
     paused: true,
     readyState: 0,
     src: '',
-    play: async () => {},
-    pause() {},
+    // Stateful, so the stream watchdog's "is it actually playing?" logic
+    // is exercised rather than stubbed away.
+    play() { this.paused = false; return Promise.resolve(); },
+    pause() { this.paused = true; },
     load() {},
   };
 }
@@ -134,7 +140,9 @@ function boot(opts = {}) {
 ;globalThis.__test = {
   fmtClock, fmtTime, progressText, friendlyError, apiPost, adoptNow,
   checkOwnerKey, validateStoredKey, sendAction, render, schedulePoll,
-  connectEvents, refresh, probeHealth, apiGet,
+  connectEvents, refresh, probeHealth, apiGet, toggle, stop,
+  get wantsAudio() { return wantsAudio; },
+  get reconnectAttempts() { return reconnectAttempts; },
   setVolume, loadVolume, applyVolume, detectVolumeSupport, volumeControlHTML,
   set volumeSupported(v) { volumeSupported = v; },
   fmtCount, regionName, shortBio, trackInfoHTML, ensureTrackInfo,
@@ -970,6 +978,43 @@ test('volume: a browser that refuses the setting is never offered the control', 
   assert.strictEqual(t.detectVolumeSupport(), false, 'detected as unsupported');
   t.volumeSupported = false;
   assert.strictEqual(t.volumeControlHTML(), '', 'so nothing is drawn');
+});
+
+test('stream: a dropped stream reconnects, an intentional pause does not', async () => {
+  const { t, els, state } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  await t.toggle('S1', 'https://radio.example.com/streams/s1');
+  assert.strictEqual(t.wantsAudio, true, 'the listener wants audio');
+
+  // The broadcaster restarts: the element ends the stream on its own.
+  els.audio.emit('ended');
+  // First backoff step is 1s — distinct from the poll's 1.5s/3s.
+  const pending = state.timers.filter((x) => x.ms === 1000);
+  assert.strictEqual(pending.length, 1, 'a reconnect was scheduled');
+  pending[0].fn();
+  const src = String(els.audio.src);
+  assert.ok(src.includes('/streams/s1'), `it went back to the same stream (${src})`);
+  assert.ok(src.includes('r='), `with a cache-buster, not the dead connection (${src})`);
+
+  // The listener presses pause. That is not a fault to recover from.
+  await t.toggle('S1', 'https://radio.example.com/streams/s1');
+  assert.strictEqual(t.wantsAudio, false, 'pause is intent, not failure');
+  const before = state.timers.filter((x) => x.ms === 1000).length;
+  els.audio.emit('ended');
+  assert.strictEqual(state.timers.filter((x) => x.ms === 1000).length, before,
+    'nothing is scheduled after a real pause');
+});
+
+test('stream: progress clears the backoff so the next drop retries fast', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));
+  await t.toggle('S1', 'https://radio.example.com/streams/s1');
+  els.audio.emit('error');
+  assert.ok(t.reconnectAttempts > 0, 'backoff started');
+  els.audio.emit('timeupdate');
+  assert.strictEqual(t.reconnectAttempts, 0, 'audio actually arriving resets it');
 });
 
 test('shortBio cuts long text at a sentence, short text untouched', ({ t }) => {
