@@ -1,7 +1,7 @@
 :root {
   --bg: #fff;
   --fg: #111;
-  --muted: #666;
+  --muted: var(--fg);   /* one ink: no greys, by request */
   --border: #ddd;
   --border-strong: #111;
   --hover: #f6f6f6;
@@ -22,6 +22,7 @@
   --space: 0.6rem;
   --danger: #c22;
   --chrome-h: 2.4rem;
+  --fs-card: clamp(0.95rem, 2.2vmin, 1.2rem);
   --topbar-h: 0px;
 }
 
@@ -29,7 +30,7 @@
   :root {
     --bg: #000;
     --fg: #f0f0f0;
-    --muted: #999;
+    --muted: var(--fg);   /* one ink: no greys, by request */
     --border: #222;
     --border-strong: #f0f0f0;
     --hover: #141414;
@@ -45,6 +46,7 @@ html, body {
   /* min-, not a fixed height: the page has to grow past the first
      screen now that the play history follows the grid. */
   min-height: 100%;
+  scrollbar-width: none;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
@@ -57,13 +59,15 @@ html, body {
 * { box-sizing: border-box; }
 
 main {
-  /* Tall enough to be the whole first screen, never taller — what is
-     below the fold is history, and it should stay below it. */
-  height: calc(100dvh - var(--topbar-h));
+  /* The first screen's worth of grid, as a floor rather than a ceiling:
+     cards grow when a track has a lot to say or a form is open, and the
+     PAGE takes the scroll. Nothing nested scrolls, so the wheel does the
+     same thing wherever the pointer happens to be. */
+  min-height: calc(100dvh - var(--topbar-h));
   width: 100%;
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
-  grid-template-rows: repeat(var(--rows, 1), 1fr);
+  grid-template-rows: repeat(var(--rows, 1), auto);
   gap: var(--gap);
   padding: var(--gap);
   padding-bottom: calc(var(--gap) + env(safe-area-inset-bottom));
@@ -82,11 +86,15 @@ main {
 
 .station {
   position: relative;
+  /* No min-height here on purpose: main's own min-height plus the grid's
+     stretch already gives every card its share of the first screen, and
+     calc() cannot divide by a var() anyway. */
   /* Identity: each card carries --accent-h (hashed from the station id);
      the accent stays a whisper — a tinted border and a faint wash — so
      the page reads calm but stations tell apart at a glance. */
   --accent: hsl(var(--accent-h, 0) 60% 58%);
-  border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--border));
+  --card-line: color-mix(in oklab, var(--accent) 45%, var(--border));
+  border: 1px solid var(--card-line);
   background: color-mix(in oklab, var(--accent) 6%, var(--bg));
   border-radius: clamp(18px, 2.5vmin, 26px);
   overflow: hidden;
@@ -169,16 +177,10 @@ main {
 /* Only a block that really does continue below fades at its edge — the
    class is set after each paint by measuring, because a centered block
    with room to spare would otherwise fade its own last line. */
-.station .now.more-below {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
-  color: var(--muted);
-  font-size: clamp(0.95rem, 2.2vmin, 1.2rem);
-}
+
 .station .now .title {
   color: var(--fg);
   font-weight: 600;
-  font-size: clamp(1rem, 2.6vmin, 1.5rem);
   line-height: 1.3;
   /* No line clamp: Bandcamp titles run long and a half-shown title is
      just noise. `anywhere` also saves the pathological ones with no
@@ -193,12 +195,9 @@ main {
 .station .now .album {
   overflow-wrap: anywhere;
   max-width: 100%;
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
 }
 /* The "from" prefix recedes further than the album name it introduces. */
-.station .now .album .from {
-  opacity: 0.65;
-}
+
 
 /* What's known about the track on air, written onto the station itself.
    Quiet by construction: the same muted ink as the album line, a narrow
@@ -212,13 +211,12 @@ main {
   margin-inline: auto;
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: clamp(0.72rem, 1.5vmin, 0.85rem);
+  font-size: var(--fs-card);
   line-height: 1.5;
   text-align: center;
 }
-.station .trackinfo .tibio { opacity: 0.9; }
-.station .trackinfo .titags,
-.station .trackinfo .tisim { opacity: 0.75; }
+
+
 
 /* The "add a station" card: the shape you are about to create, in the
    place it will appear. Dashed and accent-free so it reads as an empty
@@ -240,7 +238,6 @@ main {
 }
 /* Textual progress — deliberately a clock, not a bar. */
 .station .now .progress {
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
   font-variant-numeric: tabular-nums;
 }
 .station .now .status {
@@ -260,7 +257,6 @@ main {
   height: clamp(2.2rem, 5vmin, 3.5rem);
   flex-shrink: 0;
   color: var(--fg);
-  opacity: 0.85;
 }
 
 /* Icon visibility — exactly one of play / pause / loading shows at a time.
@@ -293,6 +289,8 @@ main {
      card edge where overflow: hidden clips them away. */
   min-width: 0;
 }
+.station .icon { color: var(--card-line); }
+.station .act--like .icon--heart-filled { color: var(--dot); }
 .station .act {
   border: none;
   background: none;
@@ -300,10 +298,8 @@ main {
   margin: 0;
   cursor: pointer;
   color: var(--fg);
-  opacity: 0.45;
   transition: opacity 0.15s ease;
 }
-.station .act:hover { opacity: 0.9; }
 .station .act:disabled { opacity: 0.2; cursor: default; }
 .station .act:focus-visible {
   outline: 2px solid var(--border-strong);
@@ -322,7 +318,6 @@ main {
 .station .timeline {
   min-width: 0;
   overflow: hidden;
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
   color: var(--muted);
 }
 .station .tnext {
@@ -349,7 +344,6 @@ main {
 .station .trecent .ttime {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
 }
 .station .act--retro {
   padding: 0.1rem;
@@ -370,7 +364,6 @@ main {
   display: flex;
   align-items: center;
   gap: 0.8em;
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
 }
 /* Where the station sourced the track — quiet provenance chip. */
 .station .origin {
@@ -433,7 +426,7 @@ main {
 #topbar input[type="range"] { width: clamp(80px, 14vw, 160px); }
 #topbar .pol-share-label { min-width: 2.6em; font-variant-numeric: tabular-nums; }
 #topbar .health { color: var(--muted); }
-#topbar .tnote { opacity: 0.75; }
+
 #topbar .ferror { color: var(--danger); }
 
 #history {
@@ -457,9 +450,9 @@ main {
   overflow-wrap: anywhere;
 }
 #history .htrack { color: var(--fg); }
-#history .htime { font-variant-numeric: tabular-nums; opacity: 0.7; }
+#history .htime { font-variant-numeric: tabular-nums; }
 #history .hsaved { color: var(--dot); }
-#history .hempty { opacity: 0.7; }
+
 #history .hfilters { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.7rem; }
 #history .h-filter, #history .h-more {
   border: 1px solid var(--border);
@@ -473,6 +466,8 @@ main {
 #history .h-filter.on { color: var(--fg); border-color: var(--border-strong); }
 #history .h-more { margin-top: 0.8rem; border-radius: 8px; }
 
+.station .icon { color: var(--card-line); }
+.station .act--like .icon--heart-filled { color: var(--dot); }
 .station .act {
   border: none;
   background: none;
@@ -480,10 +475,8 @@ main {
   margin: 0;
   cursor: pointer;
   color: var(--fg);
-  opacity: 0.45;
   transition: opacity 0.15s ease;
 }
-.station .act:hover { opacity: 0.9; }
 .station .act:disabled { opacity: 0.2; cursor: default; }
 .station .act:focus-visible {
   outline: 2px solid var(--border-strong);
@@ -502,7 +495,6 @@ main {
 .station .timeline {
   min-width: 0;
   overflow: hidden;
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
   color: var(--muted);
 }
 .station .tnext {
@@ -529,7 +521,6 @@ main {
 .station .trecent .ttime {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
 }
 .station .act--retro {
   padding: 0.1rem;
@@ -550,7 +541,6 @@ main {
   display: flex;
   align-items: center;
   gap: 0.8em;
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
 }
 /* Where the station sourced the track — quiet provenance chip. */
 .station .origin {
@@ -714,10 +704,8 @@ dialog::backdrop {
   line-height: 1;
   cursor: pointer;
   background: color-mix(in srgb, var(--bg) 70%, transparent);
-  opacity: 0.35;
   transition: opacity 0.15s ease;
 }
-#lock:hover, #lock:focus-visible { opacity: 1; }
 #lock.on { opacity: 0.75; }
 
 /* Reduced motion: the pulsing dot, blinking status, and spinner all read
@@ -802,7 +790,6 @@ main.editing .station .now { overflow: visible; }
 /* The way in. A bare ✎ at 45% opacity was invisible — the settings a
    station has are worth a word. */
 .station .act--edit {
-  opacity: 0.75;
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.1rem 0.6rem;
@@ -810,14 +797,13 @@ main.editing .station .now { overflow: visible; }
   line-height: 1.6;
   flex-shrink: 0;
 }
-.station .act--edit:hover { opacity: 1; border-color: var(--border-strong); }
+.station .act--edit:hover { border-color: var(--border-strong); }
 
 /* The summary that makes the settings visible without opening anything:
    kind, tags and era, in one muted row under the station name. */
 .station .setsum {
   color: var(--muted);
-  font-size: var(--fs-small);
-  opacity: 0.85;
+  font-size: var(--fs-card);
   overflow-wrap: anywhere;
 }
 
@@ -855,3 +841,8 @@ main.editing .station .now { overflow: visible; }
 }
 #dlg .btn:disabled { opacity: 0.4; cursor: default; }
 #dlg .btn--danger { border-color: var(--danger); color: var(--danger); }
+
+/* No scrollbar track down the side of a radio. The page still scrolls;
+   it just doesn't advertise it. */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar { width: 0; height: 0; }
