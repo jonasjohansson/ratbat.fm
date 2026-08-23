@@ -182,13 +182,6 @@ main {
   color: var(--muted);
   font-style: italic;
 }
-/* "tap to listen" — the one hint a non-active card carries; the same
-   quiet ink and size as .album/.progress, never louder. */
-.station .hint {
-  color: var(--muted);
-  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
-  text-align: center;
-}
 .station.loading .now .status {
   animation: blink 1.4s ease-in-out infinite;
 }

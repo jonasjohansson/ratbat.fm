@@ -1229,22 +1229,14 @@ test('panel bar: taste button says "Your taste" and buttons carry matching aria-
   assert.ok(bar.includes('aria-label="Play history"'));
 });
 
-test('tap-to-listen hint: on non-active cards only, gone while active or connecting', async () => {
+test('no tap-to-listen hint anywhere (removed by request)', async () => {
   const { t, els } = boot();
   await settle();
   t.adoptNow(payload(trackA));
-  assert.ok(els.stations.innerHTML.includes('>tap to listen<'), 'non-active card hints');
+  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'non-active card carries no hint');
   t.activeId = 'S1';
   t.render();
-  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card does not');
-  // Connecting: src assigned, not paused, no data yet.
-  els.audio.src = 'https://radio.example.com/streams/s1';
-  els.audio.paused = false;
-  els.audio.readyState = 1;
-  t.render();
-  const html = els.stations.innerHTML;
-  assert.ok(html.includes('Connecting…'), 'loading state shown');
-  assert.ok(!html.includes('tap to listen'), 'no hint while connecting');
+  assert.ok(!els.stations.innerHTML.includes('tap to listen'), 'active card carries no hint');
 });
 
 test('a11y: share carries title+aria, transport glyph is Play/Pause per state', async () => {

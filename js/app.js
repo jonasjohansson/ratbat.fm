@@ -363,7 +363,6 @@ function render() {
     // Quiet affordance for guests: only cards you are NOT tuned into
     // say how to engage. Connecting/buffering cards ARE the active card,
     // so they never carry it.
-    const hint = active ? '' : '<div class="hint">tap to listen</div>';
     return `
       <div role="button" tabindex="0"
         class="${classes}"
@@ -377,7 +376,6 @@ function render() {
           ${editBtn}
         </div>
         <div class="now">${now}${nowLinks}</div>
-        ${hint}
         ${timeline}
         <div class="foot">
           ${actions}
