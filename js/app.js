@@ -299,8 +299,89 @@ const ICON_NEXT =
   `<svg class="icon icon--next" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M7 5.8v12.4L16 12zM17.75 5.5v13"/></svg>`;
 const ICON_BOOST =
   `<svg class="icon icon--boost" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M6 13l6-6 6 6M6 19l6-6 6 6"/></svg>`;
+const ICON_VOLUME =
+  `<svg class="icon icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10"/></svg>`;
+const ICON_MUTED =
+  `<svg class="icon icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16.5 10l4 4M20.5 10l-4 4"/></svg>`;
 const ICON_SHARE =
   `<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>`;
+
+// --- Volume -----------------------------------------------------------
+//
+// One <audio> element plays whichever station you tuned into, so volume
+// is global by construction — one control, remembered across visits.
+//
+// iOS is the wrinkle: Safari there refuses programmatic volume (the
+// hardware buttons own it) and silently keeps `volume` at 1. Rather than
+// sniff the UA, ask the element: set a value and read it back. If it
+// didn't take, the control would be a lie, so it never renders.
+const VOL_STORE = 'ratbat_volume';
+const MUTE_STORE = 'ratbat_muted';
+
+let volume = 1;
+let muted = false;
+let volumeSupported = false;
+
+function loadVolume() {
+  try {
+    const v = parseFloat(localStorage.getItem(VOL_STORE));
+    if (!isNaN(v) && v >= 0 && v <= 1) volume = v;
+    muted = localStorage.getItem(MUTE_STORE) === '1';
+  } catch { /* private mode: defaults are fine */ }
+}
+
+function saveVolume() {
+  try {
+    localStorage.setItem(VOL_STORE, String(volume));
+    if (muted) localStorage.setItem(MUTE_STORE, '1');
+    else localStorage.removeItem(MUTE_STORE);
+  } catch { /* nothing to do — the session still works */ }
+}
+
+// Does this browser actually honour a set? (See the iOS note above.)
+function detectVolumeSupport() {
+  if (!$audio) return false;
+  const before = $audio.volume;
+  try {
+    $audio.volume = 0.123;
+    const took = Math.abs($audio.volume - 0.123) < 0.001;
+    $audio.volume = before;
+    return took;
+  } catch {
+    return false;
+  }
+}
+
+function applyVolume() {
+  if (!$audio) return;
+  try {
+    $audio.volume = volume;
+    $audio.muted = muted;
+  } catch { /* see detectVolumeSupport */ }
+}
+
+function setVolume(next, isMuted) {
+  if (next != null) volume = Math.min(1, Math.max(0, next));
+  if (isMuted != null) muted = isMuted;
+  // Dragging up from silence is a request to hear something.
+  if (next != null && next > 0 && muted) muted = false;
+  applyVolume();
+  saveVolume();
+  if (typeof renderTopbar === 'function') renderTopbar();
+}
+
+// Rendered by the header row (panels.js) so it sits with the other
+// always-on controls, but it lives here with the element it drives.
+function volumeControlHTML() {
+  if (!volumeSupported) return '';
+  const pct = Math.round((muted ? 0 : volume) * 100);
+  return `<span class="vol">
+    <button type="button" class="vol-mute" title="${muted ? 'Unmute' : 'Mute'}"
+      aria-label="${muted ? 'Unmute' : 'Mute'}">${muted ? ICON_MUTED : ICON_VOLUME}</button>
+    <input type="range" class="vol-range" min="0" max="100" value="${pct}"
+      aria-label="Volume" title="Volume ${pct}%">
+  </span>`;
+}
 
 // Grid geometry — aims for the shape Jonas described:
 // 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
@@ -1290,6 +1371,12 @@ if ($lock) {
     render();
   }
 })();
+
+// Volume before anything can play: restore what this browser chose last
+// time, and find out whether choosing is even possible here.
+loadVolume();
+volumeSupported = detectVolumeSupport();
+applyVolume();
 
 refresh().then(() => {
   connectEvents();

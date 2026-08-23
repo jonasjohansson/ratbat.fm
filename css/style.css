@@ -416,6 +416,21 @@ main {
   flex-wrap: wrap;
   gap: 0.4rem 0.9rem;
 }
+#topbar .vol {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+#topbar .vol-mute {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+}
+#topbar .vol-mute .icon { width: 1.15em; height: 1.15em; color: var(--fg); }
+#topbar .vol-range { width: clamp(70px, 10vw, 120px); }
 #topbar .health {
   font-size: 0.9em;
   line-height: 1;
@@ -846,3 +861,43 @@ main.editing .station .now { overflow: visible; }
    it just doesn't advertise it. */
 html::-webkit-scrollbar,
 body::-webkit-scrollbar { width: 0; height: 0; }
+
+/* Sliders in the same hand as everything else: a hairline track and a
+   small solid thumb, in the one ink. The UA default arrives bright blue
+   and shouts across a page that never raises its voice. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: none;
+  height: 1rem;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--fg);
+}
+input[type="range"]::-moz-range-track {
+  height: 1px;
+  background: var(--fg);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: calc(-0.35rem + 0.5px);
+  border-radius: 50%;
+  background: var(--fg);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: none;
+  border-radius: 50%;
+  background: var(--fg);
+}
+input[type="range"]:disabled { opacity: 0.35; cursor: default; }
+input[type="range"]:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 3px; }
+
+/* Checkboxes too — the same ink, no system blue. */
+input[type="checkbox"] { accent-color: var(--fg); }

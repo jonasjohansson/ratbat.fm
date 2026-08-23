@@ -23,6 +23,8 @@ function makeEl() {
     textContent: '',
     // Records custom properties so grid assertions can read back what
     // render() set (--cols/--rows/--count).
+    volume: 1,
+    muted: false,
     style: {
       props: {},
       setProperty(k, v) { this.props[k] = String(v); },
@@ -133,6 +135,8 @@ function boot(opts = {}) {
   fmtClock, fmtTime, progressText, friendlyError, apiPost, adoptNow,
   checkOwnerKey, validateStoredKey, sendAction, render, schedulePoll,
   connectEvents, refresh, probeHealth, apiGet,
+  setVolume, loadVolume, applyVolume, detectVolumeSupport, volumeControlHTML,
+  set volumeSupported(v) { volumeSupported = v; },
   fmtCount, regionName, shortBio, trackInfoHTML, ensureTrackInfo,
   get trackinfoCache() { return trackinfoCache; },
   displayDelayFor: displayDelayFor,
@@ -484,7 +488,9 @@ test('capabilities: guest gets no owner surface even when the server has it', as
   });
   await settle();
   t.renderTopbar();
-  assert.strictEqual(els.topbar.innerHTML, '', 'guests get no header row at all');
+  // Guests DO get a row now — volume is theirs. What they must not get
+  // is anything that changes the broadcaster.
+  assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'no selection controls for guests');
 });
 
 test('roster: a 503 says "catalogue unavailable" above the grid, it does not hide it', async () => {
@@ -712,13 +718,13 @@ test('capabilities: the Selection row gates on policy; taste and why are gone', 
   const guest = boot({ fetchImpl: routed({ '/health': () => ({ status: 200, body: FULL_HEALTH }) }) });
   await settle();
   guest.t.renderTopbar();
-  assert.strictEqual(guest.els.topbar.innerHTML, '', 'no row for guests — the cards say who is on air');
+  assert.ok(!guest.els.topbar.innerHTML.includes('pol-share'), 'guests get volume, never the knobs');
 
   // Owner against a server without the policy capability: strip only.
   const v1 = ownerBoot();
   await settle();
   v1.t.renderTopbar();
-  assert.strictEqual(v1.els.topbar.innerHTML, '', 'no row without the policy capability');
+  assert.ok(!v1.els.topbar.innerHTML.includes('pol-share'), 'no dial without the policy capability');
 });
 
 test('policy: /policy/get lands with the header row — dial, read-only duration, honest copy', async () => {
@@ -802,7 +808,7 @@ test('403 on an owner surface drops the key and takes the owner row with it', as
   await t.loadPolicy();
   assert.strictEqual(state.store.has('ratbat_key'), false, 'key dropped centrally');
   t.renderTopbar();
-  assert.strictEqual(els.topbar.innerHTML, '', 'the row goes with the key');
+  assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'the controls go with the key');
 });
 
 test('fmtCount compacts to K/M/B and passes small numbers through', ({ t }) => {
@@ -929,6 +935,41 @@ test('inline editor: an arriving frame must not repaint the form out from under 
   assert.ok(els.stations.innerHTML.includes('<!--caret-->'), 'grid stayed frozen');
   t.closeEditor();
   assert.ok(!els.stations.innerHTML.includes('<!--caret-->'), 'and repaints once closed');
+});
+
+test('volume: remembered across visits, mute is a toggle, dragging up unmutes', async () => {
+  const { t, els, state } = boot();
+  await settle();
+  t.renderTopbar();
+  assert.ok(els.topbar.innerHTML.includes('vol-range'), 'guests get the control');
+  t.setVolume(0.4, null);
+  assert.ok(Math.abs(els.audio.volume - 0.4) < 0.001, 'the element followed');
+  assert.strictEqual(state.store.get('ratbat_volume'), '0.4', 'and it was remembered');
+  t.setVolume(null, true);
+  assert.strictEqual(els.audio.muted, true, 'muted');
+  assert.strictEqual(state.store.get('ratbat_muted'), '1');
+  // Reaching for the slider while muted means "let me hear it".
+  t.setVolume(0.8, null);
+  assert.strictEqual(els.audio.muted, false, 'dragging up unmutes');
+  assert.strictEqual(state.store.has('ratbat_muted'), false, 'and forgets the mute');
+
+  // A fresh visit restores what was chosen.
+  const back = boot();
+  back.state.store.set('ratbat_volume', '0.25');
+  await settle();
+  back.t.loadVolume();
+  back.t.applyVolume();
+  assert.ok(Math.abs(back.els.audio.volume - 0.25) < 0.001, 'restored on the next visit');
+});
+
+test('volume: a browser that refuses the setting is never offered the control', async () => {
+  const { t, els } = boot();
+  await settle();
+  // iOS Safari's behaviour: assignment is ignored, the read stays 1.
+  Object.defineProperty(els.audio, 'volume', { get: () => 1, set: () => {}, configurable: true });
+  assert.strictEqual(t.detectVolumeSupport(), false, 'detected as unsupported');
+  t.volumeSupported = false;
+  assert.strictEqual(t.volumeControlHTML(), '', 'so nothing is drawn');
 });
 
 test('shortBio cuts long text at a sentence, short text untouched', ({ t }) => {

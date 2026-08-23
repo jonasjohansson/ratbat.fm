@@ -59,12 +59,12 @@ function renderTopbar() {
   // guest's cards already say who is on air. The health dot rides along
   // as a glance, with the detail in its tooltip.
   const owns = !!ownerKey() && capabilities.includes('policy');
-  $topbar.hidden = !owns;
+  const vol = typeof volumeControlHTML === 'function' ? volumeControlHTML() : '';
+  $topbar.hidden = !owns && !vol;
   const note = panelNote
     ? `<span class="tnote" role="status">${escapeHtml(panelNote)}</span>` : '';
-  $topbar.innerHTML = owns
-    ? `${healthStripHTML()}<span class="pol">${policyRowHTML()}${note}</span>`
-    : '';
+  $topbar.innerHTML = `${healthStripHTML()}${vol}${
+    owns ? `<span class="pol">${policyRowHTML()}${note}</span>` : ''}`;
 }
 
 // --- Health strip -----------------------------------------------------
@@ -742,8 +742,10 @@ function toggleTag(tag) {
 }
 
 function addTagFromInput() {
-  if (!editor || !$panel || typeof $panel.querySelector !== 'function') return;
-  const input = $panel.querySelector('.f-newtag');
+  // The form is in a card, so the input is found in the grid — $panel
+  // stopped existing when the sheet did.
+  if (!editor || !$stations || typeof $stations.querySelector !== 'function') return;
+  const input = $stations.querySelector('.f-newtag');
   if (!input) return;
   const tag = input.value.trim();
   if (tag && !editor.tags.includes(tag)) editor.tags.push(tag);
@@ -868,6 +870,7 @@ function onPanelClick(e) {
   if (e.target.closest('a')) return;
   const btn = e.target.closest('button');
   if (!btn) return;
+  if (btn.classList.contains('vol-mute')) return setVolume(null, !muted);
   const row = btn.closest('.row');
   // History
   if (btn.classList.contains('h-more')) return void loadHistory(true);
@@ -903,9 +906,16 @@ function onPanelInput(e) {
   const t = e.target;
   // Policy dial: drag patches the % label in place (a re-render would
   // drop the drag); the commit happens on `change`.
+  if (t.classList.contains('vol-range')) {
+    // Live while dragging, and cheap: no re-render, just the element.
+    setVolume(Number(t.value) / 100, Number(t.value) > 0 ? false : null);
+    return;
+  }
   if (t.classList.contains('pol-share')) {
-    const label = typeof $panel.querySelector === 'function'
-      ? $panel.querySelector('.pol-share-label') : null;
+    // The dial lives on the header row now — $panel is long gone, and
+    // reaching for it here threw the moment anyone dragged it.
+    const label = $topbar && typeof $topbar.querySelector === 'function'
+      ? $topbar.querySelector('.pol-share-label') : null;
     if (label) label.textContent = `${t.value}%`;
     return;
   }
@@ -916,8 +926,8 @@ function onPanelInput(e) {
   if (t.classList.contains('f-exploration')) {
     editor.exploration = Number(t.value) / 100;
     // Patch the % label in place — re-rendering would drop the drag.
-    const label = typeof $panel.querySelector === 'function'
-      ? $panel.querySelector('.f-exploration-label') : null;
+    const label = $stations && typeof $stations.querySelector === 'function'
+      ? $stations.querySelector('.f-exploration-label') : null;
     if (label) label.textContent = `${t.value}%`;
   }
 }
