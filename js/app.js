@@ -369,6 +369,28 @@ function applyVolume() {
   } catch { /* see detectVolumeSupport */ }
 }
 
+// Obey a press relayed from another of the owner's browsers. Never
+// echoes: this applies the change locally and stops there, or two
+// browsers would bounce a mute back and forth forever.
+function applyTransport(cmd) {
+  if (typeof cmd.volume === 'number') {
+    volume = Math.min(1, Math.max(0, cmd.volume));
+    if (volume > 0) muted = false;
+  }
+  if (typeof cmd.muted === 'boolean') muted = cmd.muted;
+  applyVolume();
+  saveVolume();
+  if (typeof renderTopbar === 'function') renderTopbar();
+}
+
+// Send a press to the owner's other browsers. Fire-and-forget: the
+// local change already happened, and a remote that fails to reach the
+// kitchen speaker must not undo the volume in your hand.
+function relayTransport(cmd) {
+  if (!ownerKey() || !capabilities.includes('transport')) return;
+  apiPost('/transport', { token: ownerKey(), ...cmd }).catch(() => {});
+}
+
 function setVolume(next, isMuted) {
   if (next != null) volume = Math.min(1, Math.max(0, next));
   if (isMuted != null) muted = isMuted;
@@ -377,6 +399,8 @@ function setVolume(next, isMuted) {
   applyVolume();
   saveVolume();
   if (typeof renderTopbar === 'function') renderTopbar();
+  // The iMac across the room is one of these browsers too.
+  relayTransport(next != null ? { volume: muted ? 0 : volume } : { muted });
 }
 
 // Rendered by the header row (panels.js) so it sits with the other
@@ -689,10 +713,17 @@ function renderGrid() {
     // the action buttons stop the card's play/pause toggle themselves.
     const liked = likedKeys.has(trackKey(s));
     const note = actionNotes.get(s.id);
-    // Owner-only controls, and only when display has settled — during
-    // the lag window a ♥ would target the server's (next) track, not the
-    // one being heard. Share is for everyone: guests spreading the radio
-    // is the point.
+    // Owner-only controls, on EVERY station rather than the one this
+    // browser happens to be playing. ♥, ⤴, 👎 and ⏭ are all commands to
+    // the broadcaster — a skip skips it for everyone listening — so
+    // hiding them unless you were also playing the audio locally turned
+    // a remote control into a thing you could only use while holding
+    // the speaker. Now a laptop can steer what the iMac is playing.
+    //
+    // Still gated on the display having settled: during the lag window a
+    // ♥ would target the server's next track, not the one being heard.
+    // (A card you are NOT playing adopts immediately, so it is settled.)
+    // Share is for everyone: guests spreading the radio is the point.
     const disabled = actionBusy.has(s.id) || !shown.settled ? 'disabled' : '';
     const likeLabel = liked ? 'Remove from library' : 'Save to library';
     const ownerActions = ownerKey()
@@ -718,7 +749,7 @@ function renderGrid() {
     // on the active card: you only judge what you're hearing.
     const actions = t
       ? `<span class="actions">
-          ${active ? ownerActions : ''}
+          ${ownerActions}
           <button type="button" class="act act--share" title="Share this track" aria-label="Share this track">
             ${ICON_SHARE}
           </button>
@@ -1262,6 +1293,16 @@ function connectEvents() {
     // route on the same nudge — the grid shows idle stations too, so a
     // station created or deleted elsewhere has to land here.
     maybeLoadOwnerStations();
+  });
+  // The remote control arriving. Only the owner's browsers act on it:
+  // a stranger listening publicly keeps their own volume, which is the
+  // whole reason this is a relay and not a broadcast setting.
+  src.addEventListener('transport', (e) => {
+    lastEventAt = performance.now();
+    if (!ownerKey()) return;
+    let cmd = {};
+    try { cmd = JSON.parse(e.data || '{}'); } catch { return; }
+    applyTransport(cmd);
   });
   // Named heartbeat from the next server — makes the staleness watchdog
   // below exact instead of best-effort.

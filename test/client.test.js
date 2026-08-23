@@ -143,7 +143,7 @@ function boot(opts = {}) {
   connectEvents, refresh, probeHealth, apiGet, toggle, stop,
   get wantsAudio() { return wantsAudio; },
   get reconnectAttempts() { return reconnectAttempts; },
-  setVolume, loadVolume, applyVolume, detectVolumeSupport, volumeControlHTML,
+  setVolume, loadVolume, applyVolume, detectVolumeSupport, volumeControlHTML, applyTransport,
   set volumeSupported(v) { volumeSupported = v; },
   fmtCount, regionName, shortBio, trackInfoHTML, ensureTrackInfo,
   get trackinfoCache() { return trackinfoCache; },
@@ -1000,6 +1000,66 @@ test('regions: the common ones sit above the full list, and never twice', async 
   // Sweden appears once, in the shortcut — not again in the full list.
   assert.strictEqual((html.match(/value="SE"/g) || []).length, 1, 'no duplicates');
   assert.ok(html.includes('value="AF"'), 'and nothing is dropped');
+});
+
+test('remote control: volume relays to the owner\'s other browsers, and obeys theirs', async () => {
+  const posts = [];
+  const { t, els } = boot({
+    storedKey: 'valid',
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: { ...HEALTH, capabilities: ['health', 'transport'] } }),
+      '/transport': (b) => { posts.push(b); return { status: 200, body: { status: 'ok' } }; },
+    }),
+  });
+  await settle();
+
+  // A press here goes out to the house.
+  t.setVolume(0.4, null);
+  await settle();
+  assert.deepStrictEqual(posts.at(-1), { token: 'valid', volume: 0.4 }, 'volume relayed');
+  t.setVolume(null, true);
+  await settle();
+  assert.deepStrictEqual(posts.at(-1), { token: 'valid', muted: true }, 'mute relayed');
+
+  // A press from the laptop arrives here and is obeyed — without echoing
+  // it back, or two browsers would bounce a mute between them forever.
+  const sent = posts.length;
+  t.applyTransport({ muted: false, volume: 0.9 });
+  await settle();
+  assert.ok(Math.abs(els.audio.volume - 0.9) < 0.001, 'the speaker followed');
+  assert.strictEqual(els.audio.muted, false, 'and unmuted');
+  assert.strictEqual(posts.length, sent, 'obeying is silent — no echo');
+});
+
+test('remote control: a guest neither relays nor is commanded', async () => {
+  const posts = [];
+  const { t, els } = boot({
+    fetchImpl: routed({
+      '/health': () => ({ status: 200, body: { ...HEALTH, capabilities: ['health', 'transport'] } }),
+      '/transport': (b) => { posts.push(b); return { status: 200, body: {} }; },
+    }),
+  });
+  await settle();
+  t.setVolume(0.2, null);
+  await settle();
+  assert.strictEqual(posts.length, 0, 'a guest turning their own volume down tells nobody');
+});
+
+test('remote control: owner transport shows on every station, not just the one playing here', async () => {
+  const { t, els } = boot({ storedKey: 'valid', fetchImpl: routed(policyRoutes([])) });
+  await settle();
+  // Two stations on air; this browser is playing neither.
+  t.adoptNow({ stations: [
+    { id: 'S1', slug: 's1', name: 'One', streamURL: '/s1', listeners: 1,
+      currentTrack: trackA, recent: [] },
+    { id: 'S2', slug: 's2', name: 'Two', streamURL: '/s2', listeners: 0,
+      currentTrack: { ...trackA, title: 'Beta' }, recent: [] },
+  ] });
+  const html = els.stations.innerHTML;
+  assert.strictEqual((html.match(/act--next/g) || []).length, 2,
+    'skip-to-next on both cards — it commands the broadcaster, not this page');
+  assert.strictEqual((html.match(/act--like/g) || []).length, 2, 'and ♥ likewise');
+  assert.ok(!html.includes('act--next" disabled'), 'usable without playing anything here');
 });
 
 test('editor: its buttons reach the handler through the grid delegation', async () => {
