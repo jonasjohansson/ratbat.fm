@@ -22,6 +22,7 @@
   --space: 0.6rem;
   --danger: #c22;
   --chrome-h: 2.4rem;
+  --topbar-h: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,18 +42,24 @@
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
+  /* min-, not a fixed height: the page has to grow past the first
+     screen now that the play history follows the grid. */
+  min-height: 100%;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
   line-height: var(--line);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  /* The page scrolls: the grid fills the first screen and the play
+     history sits under it, a scroll away. */
+  overflow-x: hidden;
 }
 * { box-sizing: border-box; }
 
 main {
-  height: 100dvh;
+  /* Tall enough to be the whole first screen, never taller — what is
+     below the fold is history, and it should stay below it. */
+  height: calc(100dvh - var(--topbar-h));
   width: 100%;
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
@@ -158,6 +165,11 @@ main {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-block: 0.15em;
+  /* When there IS more below, the last visible line fades instead of
+     being guillotined — an honest edge reads as "scroll", a hard cut
+     reads as broken. Content that fits never reaches the fade. */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.2em), transparent);
   color: var(--muted);
   font-size: clamp(0.95rem, 2.2vmin, 1.2rem);
 }
@@ -385,102 +397,189 @@ main {
   min-width: 0;
 }
 
+
+/* --- The two always-on surfaces ------------------------------------- *
+ * There is no bar and no sheet. The header row states what the
+ * broadcaster is doing and, for the owner, how it picks what to play.
+ * The history section simply follows the grid: scroll to reach it. */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.45rem calc(var(--gap) + 0.4rem);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-small);
+  color: var(--muted);
+  min-height: var(--topbar-h);
+}
+#topbar[hidden] { display: none; }
+#topbar .pol {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
+  margin-left: auto;
+}
+#topbar .check { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+#topbar input[type="range"] { width: clamp(80px, 14vw, 160px); }
+#topbar .pol-share-label { min-width: 2.6em; font-variant-numeric: tabular-nums; }
+#topbar .health { color: var(--muted); }
+#topbar .tnote { opacity: 0.75; }
+#topbar .ferror { color: var(--danger); }
+
+#history {
+  padding: 1.6rem calc(var(--gap) + 0.4rem) calc(3rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-small);
+}
+#history h2 {
+  margin: 0 0 0.6rem;
+  font-size: clamp(0.95rem, 2.2vmin, 1.15rem);
+  font-weight: 600;
+}
+#history .hlist { list-style: none; margin: 0; padding: 0; }
+#history .hlist li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2em 0.6em;
+  padding: 0.18rem 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+#history .htrack { color: var(--fg); }
+#history .htime { font-variant-numeric: tabular-nums; opacity: 0.7; }
+#history .hsaved { color: var(--dot); }
+#history .hempty { opacity: 0.7; }
+#history .hfilters { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.7rem; }
+#history .h-filter, #history .h-more {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.16rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+#history .h-filter.on { color: var(--fg); border-color: var(--border-strong); }
+#history .h-more { margin-top: 0.8rem; border-radius: 8px; }
+
+.station .act {
+  border: none;
+  background: none;
+  padding: 0.4rem;
+  margin: 0;
+  cursor: pointer;
+  color: var(--fg);
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+.station .act:hover { opacity: 0.9; }
+.station .act:disabled { opacity: 0.2; cursor: default; }
+.station .act:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+.station .act .icon {
+  width: clamp(1.5rem, 3.4vmin, 2.4rem);
+  height: clamp(1.5rem, 3.4vmin, 2.4rem);
+  display: block;
+}
+.station .act--like.liked {
+  color: var(--dot);
+  opacity: 1;
+}
+/* Timeline — the certain next track + what just played. Active card only. */
+.station .timeline {
+  min-width: 0;
+  overflow: hidden;
+  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
+  color: var(--muted);
+}
+.station .tnext {
+  overflow-wrap: anywhere;
+  font-style: italic;
+}
+.station .trecent {
+  list-style: none;
+  margin: 0.35em 0 0;
+  padding: 0;
+}
+.station .trecent li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.2em 0.45em;
+  min-width: 0;
+  line-height: 1.6;
+}
+.station .trecent .ttrack {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.station .trecent .ttime {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+.station .act--retro {
+  padding: 0.1rem;
+}
+.station .act--retro .icon {
+  width: 1em;
+  height: 1em;
+}
+.station .tlink,
+.station .nowlinks .tlink {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  flex-shrink: 0;
+}
+.station .tlink:hover { color: var(--fg); }
+.station .nowlinks {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  font-size: clamp(0.75rem, 1.9vmin, 0.95rem);
+}
+/* Where the station sourced the track — quiet provenance chip. */
+.station .origin {
+  border: 1px solid var(--border);
+  padding: 0 0.45em;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.04em;
+}
+/* "About" — a button dressed as a provenance link; .tlink supplies the
+   ink, this strips the UA button chrome. */
+.station .about-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.station .foot .note {
+  align-self: center;
+  color: var(--muted);
+  font-size: clamp(0.75rem, 1.8vmin, 0.95rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 /* Panel bar + panel sheet — the generalized descendants of the old
    #history bar: fixed chrome along the bottom, hairline top border, one
    panel open at a time above the bar. Panels are siblings of the grid
    on purpose — render() re-renders #stations destructively and must
    never touch form state. */
-#panelbar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space);
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  padding: 0.4rem calc(var(--gap) + 0.4rem) calc(0.4rem + env(safe-area-inset-bottom));
-  font-size: var(--fs-small);
-  z-index: 10;
-}
-#panelbar .health {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-#panelbar .pbtns {
-  margin-left: auto;
-  display: flex;
-  gap: calc(var(--space) * 1.5);
-  flex-shrink: 0;
-}
-#panelbar .pbtn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-  padding: 0.2rem 0;
-}
-#panelbar .pbtn:hover,
-#panelbar .pbtn.on { color: var(--fg); }
-#panelbar .pbtn:focus-visible {
-  outline: 2px solid var(--border-strong);
-  outline-offset: 2px;
-}
 
-#panel {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--chrome-h) + env(safe-area-inset-bottom));
-  max-height: 60dvh;
-  overflow-y: auto;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  padding: var(--space) calc(var(--gap) + 0.4rem);
-  font-size: var(--fs-small);
-  z-index: 10;
-}
-#panel[hidden] { display: none; }
-#panel .phead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space);
-}
-#panel .phead h2 {
-  margin: 0;
-  font-size: 1em;
-  font-weight: 700;
-}
-#panel .p-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 1.2em;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0.1rem 0.4rem;
-}
-#panel .p-close:hover { color: var(--fg); }
 
 /* Form primitives — quiet, hairline, token-driven so dark mode is free. */
-#panel .field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: var(--space);
-  max-width: 28rem;
-}
-#panel .field > label { color: var(--muted); }
-#panel input[type="text"],
-#panel input[type="number"],
-#panel select,
 dialog input[type="text"] {
   font: inherit;
   color: var(--fg);
@@ -490,9 +589,6 @@ dialog input[type="text"] {
   padding: 0.35rem 0.5rem;
   min-width: 0;
 }
-#panel input[type="number"] { width: 6rem; }
-#panel input:focus-visible,
-#panel select:focus-visible,
 dialog input:focus-visible,
 .chip:focus-visible,
 .btn:focus-visible {
@@ -546,129 +642,16 @@ dialog input:focus-visible,
 }
 .ferror { color: var(--danger); margin: var(--space) 0; }
 .fhint, .pnote { color: var(--muted); margin: 0.3rem 0; }
-#panel .fkind {
-  color: var(--muted);
-  font-variant-caps: small-caps;
-  margin: 0 0 var(--space);
-}
 
 /* Station rows in the panel. */
-#panel .plist {
-  list-style: none;
-  margin: var(--space) 0 0;
-  padding: 0;
-}
-#panel .plist .row {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  min-width: 0;
-  padding: 0.3rem 0;
-  border-bottom: 1px solid var(--border);
-}
-#panel .dot {
-  width: 0.6rem;
-  height: 0.6rem;
-  border-radius: 50%;
-  background: var(--dot);
-  flex-shrink: 0;
-}
-#panel .dot.off { background: var(--muted); opacity: 0.4; }
-#panel .rname {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-#panel .badge {
-  border: 1px solid var(--border);
-  padding: 0 0.45em;
-  font-variant-caps: small-caps;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
-}
-#panel .rmeta { color: var(--muted); flex-shrink: 0; }
-#panel .rspacer { flex: 1; }
-#panel .rauto { color: var(--muted); flex-shrink: 0; }
 
 /* History rows — same look they had in the old #history aside. */
-#panel .hfilters { margin-bottom: var(--space); }
-#panel .hlist {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-#panel .hlist li {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6em;
-  min-width: 0;
-  line-height: 1.7;
-  color: var(--muted);
-}
-#panel .htime {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
-}
-#panel .htrack {
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-#panel .hsaved { color: var(--dot); flex-shrink: 0; }
-#panel .hempty { font-style: italic; }
-#panel .h-more { margin-top: var(--space); }
-#panel .tlink {
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  flex-shrink: 0;
-}
-#panel .tlink:hover { color: var(--fg); }
 
 /* Selection policy + taste + about-this-track — text-first on purpose.
    The only "bar" anywhere is a dotted leader between a name and its
    score (the table-of-contents idiom), so these panels stay ink on
    paper like everything else. */
-#panel .psec { margin-top: calc(var(--space) * 2); max-width: 28rem; }
-#panel .psec h3 { margin: 0 0 0.3rem; font-size: 1em; font-weight: 700; }
-#panel .pol input[type="range"] { flex: 1; max-width: 14rem; }
-#panel .pol-share-label {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 2.5em;
-}
-#panel .slist { list-style: none; margin: 0; padding: 0; }
-#panel .srow { display: flex; align-items: baseline; gap: 0.5em; line-height: 1.7; }
-#panel .sleader {
-  flex: 1;
-  min-width: 2em;
-  border-bottom: 1px dotted var(--border-strong);
-  transform: translateY(-0.3em);
-}
-#panel .sscore { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-#panel .trow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 0.6em;
-  line-height: 1.7;
-  padding: 0.15rem 0;
-}
-#panel .tlean { flex-basis: 100%; color: var(--muted); font-style: italic; }
 /* About-this-track — plain paragraphs, same ink as everything else. */
-#panel .alinks {
-  display: flex;
-  align-items: center;
-  gap: 0.8em;
-  margin: 0 0 var(--space);
-}
-#panel .afacts, #panel .atags { color: var(--muted); margin: 0 0 0.3rem; }
-#panel .abio { max-width: 40rem; line-height: 1.6; margin: 0.3rem 0 var(--space); }
 
 /* Delete confirm — the one destructive dialog. Backdrop scrim matches
    the #lock color-mix idiom. */
@@ -694,7 +677,7 @@ dialog::backdrop {
 }
 
 /* keep the grid clear of the collapsed panel bar */
-main { padding-bottom: calc(var(--gap) + var(--chrome-h) + env(safe-area-inset-bottom)); }
+
 
 /* force 1-col layout on narrow viewports regardless of station count */
 @media (max-width: 560px) {
@@ -738,3 +721,118 @@ main { padding-bottom: calc(var(--gap) + var(--chrome-h) + env(safe-area-inset-b
   .station.loading .now .status,
   .station.loading .icon--loading { animation: none; }
 }
+
+/* --- The station editor, inside its card ----------------------------- *
+ * The form replaces the card's now-playing body while it is open, so it
+ * inherits the card's scroll and its accent. Controls are full-width and
+ * stacked: a card is a narrow column, not a settings page. */
+
+.station .editor {
+  display: grid;
+  gap: 0.7rem;
+  width: 100%;
+  max-width: 34rem;
+  margin-inline: auto;
+  text-align: left;
+  font-size: var(--fs-small);
+}
+.station .editor .field { display: grid; gap: 0.3rem; }
+.station .editor label { color: var(--muted); }
+.station .editor input[type="text"],
+.station .editor input[type="number"],
+.station .editor select {
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.station .editor .frow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+.station .editor .check { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+.station .editor .fhint { margin: 0; color: var(--muted); opacity: 0.8; }
+.station .editor .ferror { margin: 0; color: var(--danger); }
+.station .chip {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.16rem 0.65rem;
+  font: inherit;
+  cursor: pointer;
+}
+.station .chip.on { color: var(--fg); border-color: var(--border-strong); }
+.station .btn {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+.station .btn:disabled { opacity: 0.4; cursor: default; }
+.station .btn--danger { border-color: var(--danger); color: var(--danger); }
+
+/* The way in. A bare ✎ at 45% opacity was invisible — the settings a
+   station has are worth a word. */
+.station .act--edit {
+  opacity: 0.75;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  flex-shrink: 0;
+}
+.station .act--edit:hover { opacity: 1; border-color: var(--border-strong); }
+
+/* The summary that makes the settings visible without opening anything:
+   kind, tags and era, in one muted row under the station name. */
+.station .setsum {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+/* The delete confirm keeps its dialog — it is the one thing that must
+   interrupt. */
+#dlg {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  padding: 1rem 1.1rem;
+  max-width: min(28rem, 92vw);
+}
+#dlg::backdrop { background: rgba(0, 0, 0, 0.45); }
+#dlg .field { display: grid; gap: 0.35rem; margin: 0.6rem 0; }
+#dlg input[type="text"] {
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+#dlg .frow { display: flex; gap: 0.5rem; justify-content: flex-end; }
+#dlg .btn {
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+#dlg .btn:disabled { opacity: 0.4; cursor: default; }
+#dlg .btn--danger { border-color: var(--danger); color: var(--danger); }

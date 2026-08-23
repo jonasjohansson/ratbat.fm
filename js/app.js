@@ -230,7 +230,7 @@ function ensureTrackInfo(stationId, t) {
 // The bio the server sends is capped at ~1200 chars for a panel; a card
 // wants a paragraph you can take in at a glance. Cut at the last
 // sentence end that fits, else the last word.
-function shortBio(text, cap = 260) {
+function shortBio(text, cap = 200) {
   const s = String(text || '').trim();
   if (s.length <= cap) return s;
   const head = s.slice(0, cap);
@@ -254,8 +254,8 @@ function trackInfoHTML(t) {
   if (tr.firstReleaseYear != null) facts.push(`first release ${tr.firstReleaseYear}`);
   if (a.listeners != null) facts.push(`${fmtCount(a.listeners)} listeners`);
   else if (a.playcount != null) facts.push(`${fmtCount(a.playcount)} plays`);
-  const tags = (a.tags || []).filter(Boolean).slice(0, 4).join(' · ');
-  const similar = (a.similar || []).filter(Boolean).slice(0, 4).join(', ');
+  const tags = (a.tags || []).filter(Boolean).slice(0, 3).join(' · ');
+  const similar = (a.similar || []).filter(Boolean).slice(0, 3).join(', ');
   const bio = shortBio(a.bio || tr.wiki);
   const rows = [
     facts.length ? `<div class="tifacts">${escapeHtml(facts.join(' · '))}</div>` : '',
@@ -423,7 +423,29 @@ function gridStations() {
 // edit.
 function editButtonHTML(s) {
   if (!canManageStations() || s.kind === 'playlist') return '';
-  return `<button type="button" class="act act--edit" title="Edit station" aria-label="Edit station">✎</button>`;
+  // A word, not a glyph. The bare ✎ was there all along and nobody could
+  // find it — "what a station is" is worth naming out loud.
+  return `<button type="button" class="act act--edit"
+    title="Station settings" aria-label="Settings for ${escapeHtml(s.name)}">Settings</button>`;
+}
+
+// The settings a station HAS, in one muted row under its name: what it
+// is, what it is made of, when it is from. Reading them should not
+// require opening anything.
+function settingsSummaryHTML(s) {
+  if (!canManageStations()) return '';
+  const q = s.query || {};
+  const bits = [kindLabel(s.kind)];
+  const tags = (q.genreTags || []).filter(Boolean);
+  if (tags.length) bits.push(tags.slice(0, 4).join(', ') + (tags.length > 4 ? '…' : ''));
+  if (q.yearMin != null || q.yearMax != null) {
+    bits.push(`${q.yearMin != null ? q.yearMin : '…'}–${q.yearMax != null ? q.yearMax : '…'}`);
+  }
+  if ((q.regions || []).length) bits.push((q.regions || []).map(regionName).join(', '));
+  if (s.kind === 'playlist' && s.trackCount != null) bits.push(`${s.trackCount} tracks`);
+  return bits.length > 1
+    ? `<div class="setsum">${escapeHtml(bits.join(' · '))}</div>`
+    : '';
 }
 
 // The form's markup lives in panels.js, which owns the editor's state
@@ -455,9 +477,7 @@ function offAirCardHTML(s) {
       </div>
       <div class="now">
         <span class="status">${starting ? 'Starting…' : 'Off air'}</span>
-        <span class="kind">${escapeHtml(kindLabel(s.kind))}</span>
-        ${s.kind === 'playlist' && s.trackCount != null
-          ? `<span class="album">${s.trackCount} tracks</span>` : ''}
+        ${settingsSummaryHTML(s) || `<span class="kind">${escapeHtml(kindLabel(s.kind))}</span>`}
       </div>
       <div class="foot">
         ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
@@ -669,6 +689,7 @@ function renderGrid() {
           <span class="name">${escapeHtml(s.name)}</span>
           ${editBtn}
         </div>
+        ${settingsSummaryHTML(s)}
         <div class="now">${now}${nowLinks}${info}</div>
         ${timeline}
         <div class="foot">

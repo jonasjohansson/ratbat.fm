@@ -1,9 +1,10 @@
 // Ratbat panels — the app-wide surfaces, plus the station editor's state
 // machine. Two different things, deliberately:
 //
-//   * The bottom panel bar with its health strip and the sheet above it:
-//     Selection (how pools are filled, for EVERY station), Your taste,
-//     and Play history. Nothing per-station lives there any more.
+//   * The two always-on surfaces: the Selection header row (how pools
+//     are filled, for EVERY station) and the play-history section under
+//     the grid. No bar, no sheet, nothing to open — and nothing
+//     per-station lives there.
 //   * The station editor — its markup, its state and its writes. It is
 //     no longer panel-hosted: app.js paints it INSIDE the station's own
 //     card and delegates that card's click/input/change/keydown into the
@@ -20,93 +21,49 @@
 // checks, because render() can fire from an early fetch before this file
 // has evaluated.
 
-const $panelbar = document.getElementById('panelbar');
-const $panel = document.getElementById('panel');
 const $dlg = document.getElementById('dlg');
 
 const POPULARITY_LABELS = { hits: 'Hits', middle: 'Middle', deepCuts: 'Deep cuts' };
 const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
 
-// --- Panel framework --------------------------------------------------
+// --- Always-on surfaces ----------------------------------------------
+//
+// There is no panel bar and no sheet any more. Everything that used to
+// hide behind a button is simply on the page: the global Selection
+// controls as a header row above the grid, the play history as a
+// section below it that you scroll to. Nothing to discover, nothing to
+// open.
 
-let activePanel = null;
+const $topbar = document.getElementById('topbar');
+const $historySection = document.getElementById('history');
 
-// Registry — each panel owns its render function and its state, exactly
-// the #history pattern generalized. `visible` gates the bar button AND
-// openPanel: owner panels exist only while a key is stored and the
-// server advertises the capability, so against an old server the bar
-// shows exactly what it showed before this file existed.
-const PANELS = {
-  history: {
-    label: 'Play history',
-    visible: () => true,
-    load: () => loadHistory(false),
-    render: () => renderHistoryPanel(),
-  },
-  selection: {
-    // App-wide, not per-station: how every station's pool gets filled.
-    // The per-station knobs moved into the cards, so what is left here
-    // is exactly what could never live on one station — hence the name
-    // on the bar button.
-    label: 'Selection',
-    visible: () => !!ownerKey() && capabilities.includes('policy'),
-    load: () => loadPolicy(),
-    render: () => renderSelectionPanel(),
-  },
-  taste: {
-    // "Your taste" on the bar button — a bare "Taste" was a riddle to
-    // guests-turned-owners. The panel itself keeps its Taste heading.
-    label: 'Your taste',
-    visible: () => !!ownerKey() && capabilities.includes('taste'),
-    load: () => loadTaste(),
-    render: () => renderTastePanel(),
-  },
-};
-
-function renderPanelBar() {
-  if (!$panelbar) return;
-  // A panel whose gate closed while open (logout, capability rollback
-  // on reconnect) must not stay on screen showing owner UI.
-  if (activePanel && !PANELS[activePanel].visible()) closePanel();
-  const buttons = Object.keys(PANELS)
-    .filter((name) => PANELS[name].visible() && PANELS[name].inBar !== false)
-    .map((name) =>
-      `<button type="button" class="pbtn${activePanel === name ? ' on' : ''}"
-        data-panel="${name}" aria-label="${escapeHtml(PANELS[name].label)}">${escapeHtml(PANELS[name].label)}</button>`)
-    .join('');
-  $panelbar.innerHTML = `${healthStripHTML()}<span class="pbtns">${buttons}</span>`;
+// The header row: app-wide selection knobs, laid out in one line, owner
+// only. Everything per-station lives on its own card, so what is left
+// here is exactly what could never belong to one station.
+// The row is always on screen, so nothing "opens" to trigger the fetch:
+// ask for the policy the first time the owner surface becomes real, and
+// again after a login, but never twice for the same state.
+let policyRequested = false;
+function maybeLoadPolicy() {
+  const owns = !!ownerKey() && capabilities.includes('policy');
+  if (!owns) { policyRequested = false; policy = null; return; }
+  if (policyRequested) return;
+  policyRequested = true;
+  loadPolicy();
 }
 
-async function openPanel(name) {
-  const p = PANELS[name];
-  if (!p || !p.visible()) return;
-  activePanel = name;
-  if ($panel) { $panel.hidden = false; $panel.classList.add('open'); }
-  renderPanelBar();
-  p.render();      // paint what we have — the loader repaints when data lands
-  await p.load();
-  if (activePanel === name) p.render();
+function renderTopbar() {
+  if (!$topbar) return;
+  maybeLoadPolicy();
+  // Left: what the broadcaster is doing, for everyone. Right: how it
+  // picks what to play, for the owner. Both on one line, always there.
+  const strip = healthStripHTML();
+  const owns = !!ownerKey() && capabilities.includes('policy');
+  $topbar.hidden = !strip && !owns;
+  const note = panelNote
+    ? `<span class="tnote" role="status">${escapeHtml(panelNote)}</span>` : '';
+  $topbar.innerHTML = `${strip}${owns ? `<span class="pol">${policyRowHTML()}${note}</span>` : ''}`;
 }
-
-function closePanel() {
-  activePanel = null;
-  // The editor is NOT touched here any more: it lives in a card, not in
-  // this sheet, and closing a panel must not throw away a form the owner
-  // is still filling in.
-  if ($panel) {
-    $panel.hidden = true;
-    $panel.classList.remove('open');
-    $panel.innerHTML = '';
-  }
-  renderPanelBar();
-}
-
-const panelChrome = (title, body) => `
-  <div class="phead">
-    <h2>${escapeHtml(title)}</h2>
-    <button type="button" class="p-close" title="Close panel" aria-label="Close panel">×</button>
-  </div>
-  ${body}`;
 
 // --- Health strip -----------------------------------------------------
 
@@ -175,11 +132,11 @@ let panelNote = null;
 
 function showPanelNote(text) {
   panelNote = text;
-  if (activePanel === 'selection') renderSelectionPanel();
+  renderTopbar();
   setTimeout(() => {
     if (panelNote === text) {
       panelNote = null;
-      if (activePanel === 'selection') renderSelectionPanel();
+      renderTopbar();
     }
   }, 4000);
 }
@@ -297,7 +254,7 @@ async function loadPolicy() {
   } catch {
     policyError = 'Couldn’t reach the broadcaster';
   }
-  if (activePanel === 'selection') renderSelectionPanel();
+  renderTopbar();
 }
 
 // Optimistic set with reconcile: patch locally, POST only the changed
@@ -307,7 +264,7 @@ async function setPolicy(patch) {
   const prev = { ...policy };
   Object.assign(policy, patch);
   if (policy.newMusicShare != null) policyShareMemory = policy.newMusicShare;
-  renderSelectionPanel();
+  renderTopbar();
   try {
     // Object spread keeps patch's explicit nulls; keys not in patch are
     // genuinely absent from the JSON — the absent-vs-null distinction
@@ -322,16 +279,36 @@ async function setPolicy(patch) {
     policy = prev;
     showPanelNote('Couldn’t reach the broadcaster');
   }
-  renderSelectionPanel();
+  renderTopbar();
 }
 
 // The panel is titled Selection, so the section inside it isn't — one
 // heading, not an echo.
-function renderSelectionPanel() {
-  if (!$panel || activePanel !== 'selection') return;
-  $panel.innerHTML = panelChrome('Selection', `
-    ${panelNote ? `<p class="pnote" role="status">${escapeHtml(panelNote)}</p>` : ''}
-    ${policySectionHTML()}`);
+// One row of controls, not a section of fields: the checkbox, its dial,
+// the mix-set toggle and whatever the server last said, side by side.
+// The explanations ride as tooltips — the row has to stay one line.
+function policyRowHTML() {
+  if (!policy) {
+    return policyError
+      ? `<span class="ferror" role="alert">${escapeHtml(policyError)}</span>`
+      : '<span class="tnote">Loading selection…</span>';
+  }
+  const on = policy.newMusicShare != null;
+  const pct = Math.round((on ? policy.newMusicShare : policyShareMemory) * 100);
+  const minDur = policy.mixSetMinimumDuration;
+  return `
+    <label class="check" title="“New” means an artist not in your library.">
+      <input type="checkbox" class="pol-share-on"${on ? ' checked' : ''}> New music
+    </label>
+    <input type="range" class="pol-share" min="0" max="100" value="${pct}"${on ? '' : ' disabled'}
+      aria-label="Share of new music">
+    <span class="pol-share-label">${on ? `${pct}%` : 'off'}</span>
+    <label class="check"${minDur != null
+      ? ` title="A mix set is anything longer than ${escapeHtml(fmtSpan(minDur))}."` : ''}>
+      <input type="checkbox" class="pol-mixsets"${policy.excludeMixSets ? ' checked' : ''}> Skip mix sets
+    </label>
+    <span class="tnote" title="Applies to every station at its next pool refill — no restart.">applies at next refill</span>
+    ${policyError ? `<span class="ferror" role="alert">${escapeHtml(policyError)}</span>` : ''}`;
 }
 
 function policySectionHTML() {
@@ -781,71 +758,6 @@ function removeRegion(code) {
   renderEditor();
 }
 
-// --- Taste panel (W5) -------------------------------------------------
-
-// Text-only transparency: the taste profile's top artists/tags with
-// scores as dotted-leader rows (a bar of text, not a chart), then each
-// station's signal counts and top affinity artists. Fetched on open,
-// never polled — taste moves at the speed of ♥, not of seconds.
-let taste = null;
-let tasteError = null;
-
-async function loadTaste() {
-  try {
-    const { ok, status, data } = await apiPost('/taste', { token: ownerKey() });
-    if (ok) {
-      taste = data;
-      tasteError = null;
-    } else {
-      tasteError = status === 503
-        ? briefMessage(data.message, 'catalogue unavailable')
-        : friendlyError(status, data);
-    }
-  } catch {
-    tasteError = 'Couldn’t reach the broadcaster';
-  }
-  if (activePanel === 'taste') renderTastePanel();
-}
-
-const scoreRowsHTML = (items, key) => (items || []).map((it) => `
-  <li class="srow">
-    <span class="sname">${escapeHtml(it[key])}</span>
-    <span class="sleader" aria-hidden="true"></span>
-    <span class="sscore">${Math.round((it.score || 0) * 100)}%</span>
-  </li>`).join('');
-
-function renderTastePanel() {
-  if (!$panel || activePanel !== 'taste') return;
-  let body;
-  if (!taste) {
-    body = tasteError
-      ? `<p class="ferror" role="alert">${escapeHtml(tasteError)}</p>`
-      : '<p class="pnote">Loading…</p>';
-  } else {
-    const stationRows = (taste.stations || []).map((s) => {
-      const c = s.counts || {};
-      const lean = (s.topAffinityArtists || []).join(', ');
-      return `
-      <li class="trow">
-        <span class="rname">${escapeHtml(s.name)}</span>
-        <span class="rmeta">${c.plays || 0} plays · ${c.saves || 0} saves · ${c.boosts || 0} boosts · ${c.skips || 0} skips</span>
-        ${lean ? `<span class="tlean">leaning ${escapeHtml(lean)}</span>` : ''}
-      </li>`;
-    }).join('');
-    body = `
-      ${tasteError ? `<p class="ferror" role="alert">${escapeHtml(tasteError)}</p>` : ''}
-      <div class="psec"><h3>Top artists</h3>
-        <ul class="slist">${scoreRowsHTML(taste.libraryArtists, 'artist')
-          || '<li class="hempty">Nothing yet — ♥ some tracks.</li>'}</ul></div>
-      <div class="psec"><h3>Top tags</h3>
-        <ul class="slist">${scoreRowsHTML(taste.libraryTags, 'tag')
-          || '<li class="hempty">Nothing yet.</li>'}</ul></div>
-      <div class="psec"><h3>Stations</h3>
-        <ul class="slist">${stationRows || '<li class="hempty">No stations.</li>'}</ul></div>`;
-  }
-  $panel.innerHTML = panelChrome('Taste', body);
-}
-
 // --- Play history panel -----------------------------------------------
 
 // The DB-backed log, not the 5-track ring on the cards. Moved here from
@@ -869,7 +781,7 @@ async function loadHistory(more) {
     historyFilter = null;
   }
   historyLoading = true;
-  if (activePanel === 'history') renderHistoryPanel();
+  renderHistorySection();
   try {
     const res = await fetch(
       `${API_BASE}/history?limit=${HISTORY_PAGE}&offset=${historyOffset}`,
@@ -885,7 +797,7 @@ async function loadHistory(more) {
     historyDone = true;
   }
   historyLoading = false;
-  if (activePanel === 'history') renderHistoryPanel();
+  renderHistorySection();
 }
 
 function historyFilterChips() {
@@ -909,8 +821,8 @@ function historyFilterChips() {
     ${chips}</div>`;
 }
 
-function renderHistoryPanel() {
-  if (!$panel || activePanel !== 'history') return;
+function renderHistorySection() {
+  if (!$historySection) return;
   const rows = historyRows
     .filter((r) => !historyFilter || r.stationID === historyFilter)
     .map((r) => `
@@ -924,17 +836,18 @@ function renderHistoryPanel() {
   const more = !historyDone && historyRows.length
     ? `<button type="button" class="btn h-more" ${historyLoading ? 'disabled' : ''}>More</button>`
     : '';
-  $panel.innerHTML = panelChrome('Play history', `
+  $historySection.innerHTML = `
+    <h2>Play history</h2>
     ${historyFilterChips()}
     <ul class="hlist">${rows || '<li class="hempty">No history yet.</li>'}</ul>
-    ${more}`);
+    ${more}`;
 }
 
 // --- Hooks app.js pokes (guarded there with typeof) -------------------
 
-function onOwnerChange() { renderPanelBar(); }
+function onOwnerChange() { renderTopbar(); }
 
-function onHealthChange() { renderPanelBar(); }
+function onHealthChange() { renderTopbar(); }
 
 // SSE `stations` is a notification, never data — /events is public, so
 // owner state re-fetches its token-gated route here instead of trusting
@@ -952,12 +865,11 @@ function onPanelClick(e) {
   const btn = e.target.closest('button');
   if (!btn) return;
   const row = btn.closest('.row');
-  if (btn.classList.contains('p-close')) return closePanel();
   // History
   if (btn.classList.contains('h-more')) return void loadHistory(true);
   if (btn.classList.contains('h-filter')) {
     historyFilter = btn.dataset.sid || null;
-    return renderHistoryPanel();
+    return renderHistorySection();
   }
   // Stations list
   if (btn.classList.contains('s-new')) return newStationFlow();
@@ -1042,27 +954,19 @@ function onPanelKeydown(e) {
   }
 }
 
-if ($panelbar) {
-  $panelbar.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-panel]');
-    if (!b) return;
-    const name = b.dataset.panel;
-    if (activePanel === name) closePanel(); else openPanel(name);
-  });
-  renderPanelBar();
+// The header row and the history section are always on screen, so each
+// listens on itself. There is no sheet to open, close or escape from.
+if ($topbar) {
+  $topbar.addEventListener('click', onPanelClick);
+  $topbar.addEventListener('input', onPanelInput);
+  $topbar.addEventListener('change', onPanelChange);
+  renderTopbar();
 }
 
-if ($panel) {
-  $panel.addEventListener('click', onPanelClick);
-  $panel.addEventListener('input', onPanelInput);
-  $panel.addEventListener('change', onPanelChange);
-  $panel.addEventListener('keydown', onPanelKeydown);
+if ($historySection) {
+  $historySection.addEventListener('click', onPanelClick);
+  renderHistorySection();
+  // Public, and below the fold: fetch it once at boot so scrolling down
+  // always lands on something.
+  loadHistory(false);
 }
-
-document.addEventListener('keydown', (e) => {
-  // Escape closes the sheet — unless the dialog is up, whose own Escape
-  // handling must not also dismiss the panel behind it.
-  if (e.key !== 'Escape' || !activePanel) return;
-  if ($dlg && $dlg.open) return;
-  closePanel();
-});
