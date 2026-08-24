@@ -142,6 +142,7 @@ function boot(opts = {}) {
   vm.runInContext(panelsSource, ctx);
   vm.runInContext(`
 ;globalThis.__test = {
+  suggestedName, syncAutoName, toggleTag, onControlInput, addTagFromInput,
   renderTopbar, policyRowHTML, healthStripHTML, fmtSpan,
   loadOwnerStations, renderEditor, renderTimeline,
   fmtClock, fmtTime, progressText, friendlyError, apiPost, adoptNow,
@@ -1564,17 +1565,35 @@ test('timeline: a clock for what is on air, and what follows it', async () => {
   assert.ok(!html.includes('Older') && !html.includes('Newer'), 'no played-track list');
 });
 
-test('timeline: stands down when you are not listening to anything', async () => {
+// The strip is part of the page, not part of playback: the foot of the
+// layout must not appear and vanish as you press play, and the way to
+// the log has to exist before you have chosen anything to listen to.
+test('timeline: always on the page, and it says which silence this is', async () => {
   const { t, els } = boot();
   await settle();
-  t.adoptNow(payload(trackA));       // nothing active
-  assert.strictEqual(els.tl.innerHTML, '', 'no now, no timeline');
-  assert.strictEqual(els.tl.hidden, true, 'and the strip is out of the layout');
+  t.adoptNow(payload(trackA));       // stations on air, none of them yours
+  assert.strictEqual(els.tl.hidden, false, 'still in the layout');
+  assert.ok(els.tl.innerHTML.includes('Not tuned in'),
+    'the radio is playing, you are just not listening to it');
+  assert.ok(els.tl.innerHTML.includes('/history'), 'and the log stays reachable');
 
   t.activeId = 'S1';
   t.render();
-  assert.ok(els.tl.innerHTML.includes('tl-now'), 'it comes back when you tune in');
-  assert.strictEqual(els.tl.hidden, false);
+  assert.ok(els.tl.innerHTML.includes('tl-now'), 'the clock arrives when you tune in');
+  assert.ok(!els.tl.innerHTML.includes('Not tuned in'), 'and the idle line goes');
+});
+
+test('timeline: an empty roster still gets a strip and a way out', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow({ stations: [] });
+  // render() short-circuits to the empty state here; the strip must not
+  // be behind that early return.
+  assert.strictEqual(els.tl.hidden, false, 'still in the layout');
+  assert.ok(els.tl.innerHTML.includes('Nothing on air'),
+    'nobody is broadcasting — a different fact from "not tuned in"');
+  assert.ok(els.tl.innerHTML.includes('/history'),
+    'and the log is exactly what you want when the radio is silent');
 });
 
 // A track with no known length cannot be counted down, and a made-up
@@ -1607,4 +1626,90 @@ test('timeline: elapsed and remaining add up to the track', async () => {
   const html = els.tl.innerHTML;
   assert.ok(html.includes('0:06 / 6:30'), `elapsed floors (${html})`);
   assert.ok(html.includes('−6:24'), 'remaining ceilings, and 0:06 + 6:24 = 6:30');
+});
+
+// --- Automatic station names ------------------------------------------
+
+test('suggestedName: what it is, then what it is made of', async () => {
+  const { t } = boot();
+  await settle();
+  assert.strictEqual(t.suggestedName('nts', ['disco']), 'NTS Disco');
+  assert.strictEqual(t.suggestedName('bandcamp', ['techno', 'house']), 'Bandcamp Techno, House');
+  // Sentence case per tag, never title case: capitalising the first
+  // letter cannot be wrong about a connector it does not recognise.
+  assert.strictEqual(t.suggestedName('lastFM', ['drum and bass']), 'Last.fm Drum and bass');
+  // Three tags is a name; past that it is a description, and the summary
+  // line under the name is where the full list lives.
+  assert.strictEqual(t.suggestedName('nts', ['a', 'b', 'c', 'd']), 'NTS A, B, C');
+  // Nothing to be made of yet.
+  assert.strictEqual(t.suggestedName('nts', []), 'NTS');
+  assert.strictEqual(t.suggestedName('nts', ['  ', '']), 'NTS', 'blank tags are not tags');
+});
+
+test('naming: a new station follows its tags until someone types', async () => {
+  const { t } = ownerBoot({ '/vocab': () => ({ status: 200, body: V3_VOCAB }) });
+  await settle();
+  await t.loadVocab();
+  t.editor = t.newEditor('nts');
+  assert.strictEqual(t.editor.name, 'NTS', 'named before it has tags');
+
+  t.toggleTag('disco');
+  assert.strictEqual(t.editor.name, 'NTS Disco', 'and it keeps up');
+  t.toggleTag('soul');
+  assert.strictEqual(t.editor.name, 'NTS Disco, Soul');
+  t.toggleTag('disco');
+  assert.strictEqual(t.editor.name, 'NTS Soul', 'including when a tag comes off');
+
+  // The first keystroke claims it for good.
+  t.onControlInput({ target: { classList: { contains: (c) => c === 'f-name' }, value: 'Sunday Morning' } });
+  assert.strictEqual(t.editor.nameAuto, false);
+  t.toggleTag('jazz');
+  assert.strictEqual(t.editor.name, 'Sunday Morning',
+    'a named station is not renamed out from under its owner');
+});
+
+test('naming: clearing the field does not hand the name back to the machine', async () => {
+  const { t } = ownerBoot({ '/vocab': () => ({ status: 200, body: V3_VOCAB }) });
+  await settle();
+  t.editor = t.newEditor('nts');
+  t.onControlInput({ target: { classList: { contains: (c) => c === 'f-name' }, value: '' } });
+  t.toggleTag('disco');
+  assert.strictEqual(t.editor.name, '', 'still theirs, still empty');
+  assert.strictEqual(t.validateEditor(t.editor), 'Name the station',
+    'and the form says so rather than quietly filling it in');
+});
+
+test('naming: editing an auto-named station keeps it automatic', async () => {
+  const { t } = boot();
+  await settle();
+  const auto = t.editorFrom({
+    id: 'x', kind: 'nts', name: 'NTS Disco', query: { genreTags: ['disco'] },
+  });
+  assert.strictEqual(auto.nameAuto, true, 'the name is exactly what we would have suggested');
+
+  const named = t.editorFrom({
+    id: 'y', kind: 'nts', name: 'Sunday Morning', query: { genreTags: ['disco'] },
+  });
+  assert.strictEqual(named.nameAuto, false, 'this one was named by a person');
+});
+
+test('summary: the line under the name goes when it only repeats it', async () => {
+  const { t, els } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [] } }),
+  });
+  await settle();
+  const card = (name, tags) => {
+    t.adoptNow({ stations: [{
+      id: 'S1', slug: 's1', name, streamURL: '/s/1', listeners: 0,
+      kind: 'nts', query: { genreTags: tags },
+      currentTrack: trackA, recent: [],
+    }] });
+    return els.stations.innerHTML;
+  };
+  assert.ok(!card('NTS Disco', ['disco']).includes('class="setsum"'),
+    '"NTS · disco" under "NTS Disco" says nothing');
+  assert.ok(card('Sunday Morning', ['disco']).includes('class="setsum"'),
+    'but a named station still shows what it is made of');
+  assert.ok(card('NTS Disco', ['disco', 'soul']).includes('class="setsum"'),
+    'and so does one whose tags have outgrown its name');
 });

@@ -1072,7 +1072,9 @@ input[type="checkbox"] { accent-color: var(--fg); }
   margin-right: 0.95rem;
   background: var(--border);
 }
-.tl-past { opacity: 0.72; }
+/* Nothing playing here. Still a line, so the foot of the page does not
+   appear and vanish as you press play. */
+.tl-idle { color: var(--muted); font-style: italic; }
 /* What is on air is the anchor: full ink, and the only bold thing here. */
 .tl-now .ttrack { color: var(--fg); font-weight: 600; }
 .tl-next { font-style: italic; }

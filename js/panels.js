@@ -439,9 +439,16 @@ async function deleteStationFlow(id) {
 
 let editor = null;
 
+// `nameAuto` means "nobody has claimed this name" — while it holds, the
+// name is recomputed from the kind and tags on every change, so picking
+// NTS and tagging it `disco` fills in "NTS Disco" without anyone typing.
+// The first keystroke in the name field ends that for good: an owner who
+// names a station "Sunday Morning" must not have it renamed out from
+// under them the next time they add a tag.
 function newEditor(kind) {
   return {
-    mode: 'create', kind, name: '', tags: [], tagMatch: 'any',
+    mode: 'create', kind, name: suggestedName(kind, []), nameAuto: true,
+    tags: [], tagMatch: 'any',
     yearMin: null, yearMax: null, regions: [], popularity: 'middle',
     exploration: 0.25, sort: 'date', shufflePool: false,
     excludeOwnedLibrary: false, excludedArtists: [],
@@ -455,9 +462,14 @@ function newEditor(kind) {
 // form) are carried so an update round-trips them unchanged.
 function editorFrom(s) {
   const q = s.query || {};
+  const tags = (q.genreTags || []).slice();
   return {
     mode: 'edit', id: s.id, kind: s.kind, name: s.name || '',
-    tags: (q.genreTags || []).slice(),
+    // A station whose name still matches what this would have suggested
+    // was never named by hand, so it goes on following its tags. One
+    // that was named keeps that name whatever happens to its tags.
+    nameAuto: (s.name || '') === suggestedName(s.kind, tags),
+    tags,
     tagMatch: q.tagMatch || 'any',
     yearMin: q.yearMin ?? null, yearMax: q.yearMax ?? null,
     regions: (q.regions || []).slice(),
@@ -587,7 +599,10 @@ function openNewStationFlow() {
     // vocab.kinds is what THIS server can create — re-seed the blank
     // form's kind if the fallback guess isn't on the menu.
     const kinds = (vocab && vocab.kinds) || [];
-    if (kinds.length && !kinds.includes(editor.kind)) editor.kind = kinds[0];
+    if (kinds.length && !kinds.includes(editor.kind)) {
+      editor.kind = kinds[0];
+      syncAutoName();
+    }
     renderEditor();
   });
 }
@@ -695,7 +710,12 @@ function editorHTML(ed) {
         </select></div>`
       : `<p class="fkind field--wide">${escapeHtml(KIND_LABELS[ed.kind] || ed.kind)} station</p>`}
     <div class="field"><label>Name</label>
-      <input type="text" class="f-name" value="${escapeHtml(ed.name)}" autocomplete="off"></div>
+      <input type="text" class="f-name" value="${escapeHtml(ed.name)}" autocomplete="off">
+      ${ed.nameAuto
+        // Without this the name visibly rewriting itself as you add tags
+        // reads as a bug rather than as a default.
+        ? '<p class="fhint">Follows the tags. Type to name it yourself.</p>'
+        : ''}</div>
     <div class="field field--wide"><label>Tags</label>
       <div class="chips">${tagChips}</div>
       <div class="frow">
@@ -772,10 +792,19 @@ function editorNavHTML() {
   </span>`;
 }
 
+// Called after anything the suggested name is derived from changes. A
+// no-op once the owner has typed a name of their own.
+function syncAutoName() {
+  if (editor && editor.nameAuto) {
+    editor.name = suggestedName(editor.kind, editor.tags);
+  }
+}
+
 function toggleTag(tag) {
   if (!editor) return;
   const i = editor.tags.indexOf(tag);
   if (i >= 0) editor.tags.splice(i, 1); else editor.tags.push(tag);
+  syncAutoName();
   renderEditor();
 }
 
@@ -787,6 +816,7 @@ function addTagFromInput() {
   if (!input) return;
   const tag = input.value.trim();
   if (tag && !editor.tags.includes(tag)) editor.tags.push(tag);
+  syncAutoName();
   renderEditor();
 }
 
@@ -864,7 +894,12 @@ function onControlInput(e) {
     return;
   }
   if (!editor) return;
-  if (t.classList.contains('f-name')) editor.name = t.value;
+  if (t.classList.contains('f-name')) {
+    editor.name = t.value;
+    // Typed in, so it is theirs now — even if they typed exactly what
+    // was suggested, and even if they clear it again.
+    editor.nameAuto = false;
+  }
   if (t.classList.contains('f-yearmin')) editor.yearMin = t.value ? Number(t.value) : null;
   if (t.classList.contains('f-yearmax')) editor.yearMax = t.value ? Number(t.value) : null;
   if (t.classList.contains('f-exploration')) {
@@ -895,6 +930,7 @@ function onControlChange(e) {
   if (!editor) return;
   if (t.classList.contains('f-kind')) {
     editor.kind = t.value;
+    syncAutoName();
     return renderEditor();
   }
   if (t.classList.contains('f-popularity')) editor.popularity = t.value;
