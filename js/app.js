@@ -163,6 +163,7 @@ const trackKey = (s) =>
   s.currentTrack ? `${s.id}|${s.currentTrack.artist}|${s.currentTrack.title}` : null;
 
 const $stations = document.getElementById('stations');
+const $tl = document.getElementById('tl');
 const $audio = document.getElementById('audio');
 const $lock = document.getElementById('lock');
 
@@ -757,33 +758,12 @@ function renderGrid() {
           ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
         </span>`
       : '';
-    // Timeline on the active card: the certain next track, then what
-    // just played (each row retro-♥-able for the owner, linkable for
-    // everyone). Recent rows still inside the display-lag window are
-    // suppressed — the card's now-playing is still showing them.
-    const shownKey = (displayState.get(s.id) || {}).shownKey;
+    // Provenance links for the marquee. The timeline that used to sit
+    // under it is the strip at the foot of the page now.
     const links = (o) => [
       o.sourceURL ? `<a class="tlink" href="${escapeHtml(o.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
       o.youtubeURL ? `<a class="tlink" href="${escapeHtml(o.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
     ].join('');
-    const recentRows = (s.recent || [])
-      .filter((r) => `${s.id}|${r.artist}|${r.title}` !== shownKey)
-      .slice(0, 4)
-      .map((r) => `
-        <li>
-          ${r.playedAt ? `<span class="ttime">${escapeHtml(fmtTime(r.playedAt))}</span>` : ''}
-          ${ownerKey()
-            ? `<button type="button" class="act act--retro" data-entry="${escapeHtml(r.entryID)}" title="Save to library" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
-            : ''}
-          <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
-          ${links(r)}
-        </li>`).join('');
-    const timeline = active && (s.nextTrack || recentRows)
-      ? `<div class="timeline">
-          ${s.nextTrack ? `<div class="tnext">Next: ${escapeHtml(s.nextTrack.artist)} — ${escapeHtml(s.nextTrack.title)}</div>` : ''}
-          ${recentRows ? `<ul class="trecent">${recentRows}</ul>` : ''}
-        </div>`
-      : '';
     // Origin badge: which source fed the station this track. Wire values
     // are Swift coding keys — map them to display names, pass unknown
     // ones through so new origins degrade to their raw name.
@@ -825,7 +805,6 @@ function renderGrid() {
           ${settingsSummaryHTML(s)}
           <div class="now">${now}${nowLinks}</div>
           ${info}
-          ${timeline}
         </div>
         <div class="foot">
           ${actions}
@@ -851,6 +830,82 @@ function renderGrid() {
     : '');
 
   renderOverflowHints();
+  renderTimeline();
+}
+
+// --- The master timeline ---------------------------------------------
+//
+// One strip at the foot of the page, reading left to right in the order
+// the music actually happened: what played, what is playing, what is
+// next. It used to be a block inside whichever card you were listening
+// to, where it was both the tallest thing on the card and the reason the
+// card overflowed — and it was duplicated per station for a sequence
+// only one station at a time can have.
+//
+// It follows the station you are listening to. With nothing playing here
+// there is no "now" to anchor a timeline on, so the strip stands down
+// rather than inventing one out of whichever station happens to be
+// first.
+function renderTimeline() {
+  if (!$tl) return;
+  const s = stations.find((x) => x.id === activeId);
+  const shown = s ? displayTrack(s) : null;
+  const t = shown && shown.track;
+  if (!s || !t) {
+    $tl.innerHTML = '';
+    $tl.hidden = true;
+    return;
+  }
+  $tl.hidden = false;
+
+  const links = (o) => [
+    o.sourceURL ? `<a class="tlink" href="${escapeHtml(o.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
+    o.youtubeURL ? `<a class="tlink" href="${escapeHtml(o.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
+  ].join('');
+
+  // Recent entries still inside the display-lag window are suppressed:
+  // the strip's "now" is still naming them, and a track cannot be in two
+  // places on one timeline. No provenance links on the past entries
+  // either — five sets of them turn a one-line rail into a hedge, and
+  // the rule the cards already follow is that you dig into what you are
+  // hearing.
+  const shownKey = `${s.id}|${t.artist}|${t.title}`;
+  const past = (s.recent || [])
+    .filter((r) => `${s.id}|${r.artist}|${r.title}` !== shownKey)
+    .slice(0, 4)
+    .reverse()      // oldest first: the strip reads forwards in time
+    .map((r) => `
+      <li class="tl-past">
+        ${r.playedAt ? `<span class="ttime">${escapeHtml(fmtTime(r.playedAt))}</span>` : ''}
+        ${ownerKey()
+          ? `<button type="button" class="act act--retro" data-station="${escapeHtml(s.id)}" data-entry="${escapeHtml(r.entryID)}" title="Save to library" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
+          : ''}
+        <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
+      </li>`).join('');
+
+  const now = `
+    <li class="tl-now" aria-current="true">
+      <span class="tl-label">${escapeHtml(s.name)}</span>
+      <span class="ttrack">${escapeHtml(t.artist)} — ${escapeHtml(t.title)}</span>
+      <span class="progress" data-station="${escapeHtml(s.id)}">${progressText(s.id)}</span>
+      ${links(t)}
+    </li>`;
+
+  const next = s.nextTrack
+    ? `<li class="tl-next">
+        <span class="tl-label tl-word">next</span>
+        <span class="ttrack">${escapeHtml(s.nextTrack.artist)} — ${escapeHtml(s.nextTrack.title)}</span>
+      </li>`
+    : '';
+
+  $tl.innerHTML = `<ol class="tl-rail">${past}${now}${next}</ol>
+    <a class="tl-more" href="/history">History</a>`;
+  // The rail runs past both edges; what matters is what is playing, so
+  // put that in view rather than whichever end the browser picked.
+  const el = $tl.querySelector('.tl-now');
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
 }
 
 // A card is a fixed rectangle, and a rectangle can be too small for what
@@ -932,6 +987,19 @@ $stations.addEventListener('click', (e) => {
 
 // div[role=button] doesn't get click-on-Enter/Space for free the way a
 // real <button> did — restore it so the cards stay keyboard-operable.
+// The strip carries the owner's retro-♥ on every past entry, exactly as
+// the on-card timeline did. It is outside the grid, so it needs its own
+// listener — the station comes off the button rather than off an
+// enclosing card, because the strip has no cards.
+if ($tl) {
+  $tl.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    const btn = e.target.closest('.act--retro');
+    if (!btn) return;
+    sendAction(btn.dataset.station, 'like', btn.dataset.entry);
+  });
+}
+
 $stations.addEventListener('keydown', (e) => {
   // Typing in the editor must never reach the card's play/pause keys.
   if (e.target.closest && e.target.closest('.editor')) {

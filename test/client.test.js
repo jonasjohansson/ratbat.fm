@@ -86,7 +86,7 @@ function boot(opts = {}) {
   FakeEventSource.instances = [];
   const els = {
     stations: makeEl(), audio: makeEl(), lock: makeEl(),
-    topbar: makeEl(), history: makeEl(), dlg: makeEl(),
+    topbar: makeEl(), tl: makeEl(), dlg: makeEl(),
   };
   const state = {
     nowMs: 0,
@@ -142,6 +142,8 @@ function boot(opts = {}) {
   vm.runInContext(panelsSource, ctx);
   vm.runInContext(`
 ;globalThis.__test = {
+  renderTopbar, policyRowHTML, healthStripHTML, fmtSpan,
+  loadOwnerStations, renderEditor, renderTimeline,
   fmtClock, fmtTime, progressText, friendlyError, apiPost, adoptNow,
   checkOwnerKey, validateStoredKey, sendAction, render, schedulePoll,
   connectEvents, refresh, probeHealth, apiGet, toggle, stop,
@@ -158,8 +160,6 @@ function boot(opts = {}) {
   get pollFailures() { return pollFailures; },
   set activeId(id) { activeId = id; },
   // panels.js surface
-  renderTopbar, policyRowHTML, renderHistorySection, healthStripHTML, fmtSpan,
-  loadOwnerStations, renderEditor, loadHistory,
   buildStationBody, editorFrom, newEditor, validateEditor, nameMatches,
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onControlChange,
@@ -172,9 +172,6 @@ function boot(opts = {}) {
   set vocab(v) { vocab = v; },
   get ownerStations() { return ownerStations; },
   set ownerStations(v) { ownerStations = v; },
-  get historyRows() { return historyRows; },
-  get historyDone() { return historyDone; },
-  set historyFilter(v) { historyFilter = v; },
   get editor() { return editor; },
   set editor(v) { editor = v; },
   get policy() { return policy; },
@@ -281,7 +278,10 @@ test('adoptNow absolutizes streamURL and renders album / origin / progress / pla
   assert.ok(html.includes('class="album"') && html.includes('LP One'), 'album line');
   assert.ok(html.includes('>Last.fm<'), 'origin badge mapped');
   assert.ok(html.includes('0:00 / 6:05'), 'textual progress');
-  assert.ok(html.includes('class="ttime"'), 'recent playedAt time');
+  // The recent ring belongs to the strip along the foot now, not to the
+  // card — one timeline for the one station you can hear at a time.
+  assert.ok(!html.includes('class="ttime"'), 'no timeline inside the card');
+  assert.ok(els.tl.innerHTML.includes('class="ttime"'), 'recent playedAt time, on the strip');
 });
 
 test('progressText ticks with the clock and clamps to duration', async () => {
@@ -479,7 +479,6 @@ test('capabilities: old server (/health 404) shows no strip and no selection row
   t.renderTopbar();
   assert.ok(!els.topbar.innerHTML.includes('class="health"'), 'no strip');
   assert.ok(!els.topbar.innerHTML.includes('pol-share'), 'no selection row');
-  assert.ok(els.history.innerHTML.includes('Play history'), 'history section still stands');
 });
 
 test('capabilities: new server + owner key → no bar buttons, no row without policy', async () => {
@@ -629,54 +628,10 @@ test('delete confirm: name mismatch blocks the POST, a match deletes', async () 
   assert.strictEqual(t.ownerStations.length, 0);
 });
 
-test('history: More pages accumulate, a short page ends the log', async () => {
-  const entry = (i, sid, name) => ({
-    playedAt: 1755856800 + i, artist: `A${i}`, title: `T${i}`, saved: false,
-    sourceURL: null, youtubeURL: null, stationID: sid, station: name,
-  });
-  const page1 = Array.from({ length: 100 }, (_, i) =>
-    entry(i, i % 2 ? 's1' : 's2', i % 2 ? 'One' : null));
-  const page2 = Array.from({ length: 40 }, (_, i) => entry(100 + i, 's1', 'One'));
-  const { t, els, state } = boot({
-    fetchImpl: routed({
-      '/history': (_, u) => ({
-        status: 200,
-        body: { entries: u.includes('offset=0') ? page1 : page2 },
-      }),
-    }),
-  });
-  await settle();
-  assert.strictEqual(t.historyRows.length, 100);
-  assert.strictEqual(t.historyDone, false);
-  assert.ok(els.history.innerHTML.includes('h-more'), 'More button offered');
-  await t.loadHistory(true);
-  assert.strictEqual(t.historyRows.length, 140, 'pages accumulate');
-  assert.strictEqual(t.historyDone, true, 'short page = end');
-  const urls = state.fetchCalls.map(([u]) => String(u)).filter((u) => u.includes('/history'));
-  assert.ok(urls[1].includes('offset=100'), `second page offset (${urls[1]})`);
-  assert.ok(!els.history.innerHTML.includes('h-more'), 'More gone at the end');
-});
-
-test('history: per-station filter is client-side over accumulated rows', async () => {
-  const entry = (i, sid, name) => ({
-    playedAt: 1755856800 + i, artist: `A${i}`, title: `T${i}`, saved: false,
-    sourceURL: null, youtubeURL: null, stationID: sid, station: name,
-  });
-  const rows = [entry(0, 's1', 'One'), entry(1, 's2', null), entry(2, 's1', 'One')];
-  const { t, els } = boot({
-    fetchImpl: routed({ '/history': () => ({ status: 200, body: { entries: rows } }) }),
-  });
-  await settle();
-  assert.ok(els.history.innerHTML.includes('(deleted station)'), 'null name gets a label');
-  const shown = () => (els.history.innerHTML.match(/class="htrack"/g) || []).length;
-  assert.strictEqual(shown(), 3);
-  t.historyFilter = 's2';
-  t.renderHistorySection();
-  assert.strictEqual(shown(), 1, 'filter narrows without re-fetching');
-  t.historyFilter = null;
-  t.renderHistorySection();
-  assert.strictEqual(shown(), 3);
-});
+// The play history tests moved to test/history.test.js along with the
+// code: the log is its own page and its own script now, and testing it
+// through the radio's harness would boot an audio element and an
+// EventSource to check a list.
 
 // --- Policy + transparency panels (W4/W5) -----------------------------
 
@@ -1568,4 +1523,97 @@ test('overflow hint: the fade is measured, never assumed', async () => {
   overflowing.scrollHeight = 180;
   t.render();
   assert.ok(!overflowing.cls.has('more-below'), 'the fade clears when it stops being true');
+});
+
+// --- The master timeline ---------------------------------------------
+
+// One strip, at the foot, for the one station you can actually hear. It
+// replaced a block that every card rendered separately for a sequence
+// only one station at a time can have.
+test('timeline: reads forwards in time, past then now then next', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow({
+    stations: [{
+      id: 'S1', slug: 's1', name: 'One', streamURL: '/streams/s1', listeners: 1,
+      currentTrack: trackA,
+      nextTrack: { artist: 'Later', title: 'Song', origin: 'lastFM' },
+      recent: [
+        { artist: 'Newer', title: 'Row', playedAt: 1755856900, entryID: 'e2' },
+        { artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' },
+      ],
+    }],
+  });
+  const html = els.tl.innerHTML;
+  const at = (needle) => html.indexOf(needle);
+  assert.ok(at('Older') < at('Newer'), 'the ring arrives newest-first and is reversed');
+  assert.ok(at('Newer') < at('tl-now'), 'what played comes before what is playing');
+  assert.ok(at('tl-now') < at('tl-next'), 'and what is playing before what is next');
+  assert.ok(html.includes('Artist A — Alpha'), 'now names the current track');
+  assert.ok(html.includes('Later — Song'), 'next names the next one');
+  assert.ok(html.includes('/history'), 'and the log is one link away');
+});
+
+test('timeline: stands down when you are not listening to anything', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow(payload(trackA));       // nothing active
+  assert.strictEqual(els.tl.innerHTML, '', 'no now, no timeline');
+  assert.strictEqual(els.tl.hidden, true, 'and the strip is out of the layout');
+
+  t.activeId = 'S1';
+  t.render();
+  assert.ok(els.tl.innerHTML.includes('tl-now'), 'it comes back when you tune in');
+  assert.strictEqual(els.tl.hidden, false);
+});
+
+test('timeline: a recent row still being announced as "now" is not shown twice', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow({
+    stations: [{
+      id: 'S1', slug: 's1', name: 'One', streamURL: '/streams/s1', listeners: 1,
+      currentTrack: trackA,
+      // The broadcaster puts the current track in the ring the moment it
+      // starts; the strip is still naming it as `now`.
+      recent: [
+        { artist: trackA.artist, title: trackA.title, playedAt: 1755856900, entryID: 'e9' },
+        { artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' },
+      ],
+    }],
+  });
+  const html = els.tl.innerHTML;
+  assert.strictEqual((html.match(/Alpha/g) || []).length, 1,
+    'the track on air appears once, as now');
+  assert.ok(html.includes('Older'), 'and the genuinely past row survives');
+});
+
+test('timeline: the owner retro-♥ carries its own station', async () => {
+  const { t, els, state } = ownerBoot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow({
+    stations: [{
+      id: 'S1', slug: 's1', name: 'One', streamURL: '/streams/s1', listeners: 1,
+      currentTrack: trackA,
+      recent: [{ artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' }],
+    }],
+  });
+  assert.ok(els.tl.innerHTML.includes('act--retro'), 'owner gets the retro heart');
+  // The strip has no cards, so the station cannot come off an enclosing
+  // one — it has to be on the button.
+  assert.ok(els.tl.innerHTML.includes('data-station="S1"'), 'and it names its station');
+  assert.ok(els.tl.innerHTML.includes('data-entry="e1"'), 'and its entry');
+
+  const onClick = els.tl.handlers.click[0];
+  onClick({ target: {
+    closest: (sel) => (sel === 'a' ? null
+      : { dataset: { station: 'S1', entry: 'e1' } }),
+  } });
+  await settle();
+  const liked = state.fetchCalls.filter(([u]) => String(u).includes('/like'));
+  assert.strictEqual(liked.length, 1, 'the click reaches the broadcaster');
+  assert.strictEqual(JSON.parse(liked[0][1].body).entry, 'e1', 'for that entry');
 });
