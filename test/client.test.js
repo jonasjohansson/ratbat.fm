@@ -834,6 +834,7 @@ test('track info: written onto the card for the current track, no toggle anywher
   t.capabilities.length = 0;
   t.capabilities.push('trackinfo');
   await settle();
+  t.activeId = 'S1';
   t.trackinfoCache.set('Artist A|Alpha', {
     artist: 'Artist A', title: 'Alpha',
     artistInfo: { bio: 'A dub engineer from Kingston who built his own desk.',
@@ -879,6 +880,7 @@ test('track info: the answer is cached under the track that came back, not the o
   await settle();
   t.capabilities.length = 0;
   t.capabilities.push('trackinfo');
+  t.activeId = 'S1';
   t.adoptNow(payload(trackA));
   await settle(); await settle(); await settle();
   assert.equal(calls, 1, 'asked once');
@@ -896,8 +898,8 @@ test('new-station card: an empty slot at the end of the grid, owner only', async
   const html = els.stations.innerHTML;
   assert.ok(html.includes('station--new'), 'owner gets the empty card');
   assert.ok(html.includes('aria-label="Add a new station"'), 'and it is labeled');
-  // One real station + the ghost = two cards in the grid.
-  assert.equal(els.stations.style.getPropertyValue('--count'), '2', 'grid counts the ghost');
+  assert.strictEqual((html.match(/class="station/g) || []).length, 2,
+    'one real station and the ghost');
 });
 
 test('new-station card: guests never see it, and it never starts audio', async () => {
@@ -905,7 +907,8 @@ test('new-station card: guests never see it, and it never starts audio', async (
   await settle();
   t.adoptNow(payload(trackA));
   assert.ok(!els.stations.innerHTML.includes('station--new'), 'guest sees no empty card');
-  assert.equal(els.stations.style.getPropertyValue('--count'), '1', 'grid counts stations only');
+  assert.strictEqual((els.stations.innerHTML.match(/class="station/g) || []).length, 1,
+    'the one broadcasting station, and nothing else');
 });
 
 test('inline editor: the ✎ opens the form inside its own card, not a panel', async () => {
@@ -1043,6 +1046,30 @@ test('remote control: a guest neither relays nor is commanded', async () => {
   t.setVolume(0.2, null);
   await settle();
   assert.strictEqual(posts.length, 0, 'a guest turning their own volume down tells nobody');
+});
+
+test('quiet cards: the dossier belongs to the station you are hearing', async () => {
+  const { t, els } = boot();
+  t.capabilities.length = 0;
+  t.capabilities.push('trackinfo');
+  await settle();
+  t.trackinfoCache.set('Artist A|Alpha', {
+    artist: 'Artist A', title: 'Alpha',
+    artistInfo: { bio: 'A dub engineer from Kingston.', country: 'JM',
+      listeners: 1200000, playcount: null, tags: ['dub'], similar: ['King Tubby'] },
+    trackInfo: { album: null, firstReleaseYear: 1976, listeners: null, playcount: null, tags: [], wiki: null },
+  });
+  t.adoptNow(payload(trackA));
+  let html = els.stations.innerHTML;
+  assert.ok(html.includes('Alpha'), 'an idle card still says what is on');
+  assert.ok(!html.includes('class="trackinfo"'), 'but carries no dossier');
+  assert.ok(!/\d+ listening/.test(html), 'and no listener count anywhere');
+
+  t.activeId = 'S1';
+  t.render();
+  html = els.stations.innerHTML;
+  assert.ok(html.includes('class="trackinfo"'), 'the card you are hearing gets it');
+  assert.ok(html.includes('first release 1976'), 'facts and all');
 });
 
 test('remote control: owner transport shows on every station, not just the one playing here', async () => {
