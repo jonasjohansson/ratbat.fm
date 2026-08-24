@@ -1,2 +1,5 @@
 .DS_Store
 *.swp
+
+# wrangler writes an account cache here; it is local state, not source.
+cf-worker/.wrangler/
