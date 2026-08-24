@@ -143,12 +143,31 @@ function progressText(id) {
   return d ? `${fmtClock(Math.min(elapsed, d))} / ${fmtClock(d)}` : fmtClock(elapsed);
 }
 
+// How much of the track is left, as a countdown. Empty when the length
+// is unknown — a source that never told us how long the track is cannot
+// be asked how much of it remains, and a made-up number is worse than
+// no number.
+function remainingText(id) {
+  const st = displayState.get(id);
+  if (!st || st.shownAt == null || !st.shownTrack) return '';
+  const d = st.shownTrack.durationSeconds;
+  if (!d) return '';
+  const left = d - (performance.now() - st.shownAt) / 1000;
+  // Rounded UP, where elapsed rounds down: floor both and the two never
+  // add up to the track's length (0:06 alongside −6:23 of 6:30), which
+  // reads as one of them being wrong.
+  return `−${fmtClock(Math.ceil(Math.max(0, left)))}`;
+}
+
 // The 1s tick patches only the progress spans' text — never structure —
 // so it coexists with the destructive re-render instead of fighting it
 // (render always re-emits the same freshly computed string).
 setInterval(() => {
   document.querySelectorAll('.progress').forEach((el) => {
     el.textContent = progressText(el.dataset.station);
+  });
+  document.querySelectorAll('.remaining').forEach((el) => {
+    el.textContent = remainingText(el.dataset.station);
   });
 }, 1000);
 
@@ -682,9 +701,9 @@ function renderGrid() {
     const shown = displayTrack(s);
     const t = shown.track;
     // Meta stays text-only by design — `artworkURL` is deliberately
-    // ignored. Album and progress are quiet second-order lines; the
-    // progress span's text is re-patched every second by the tick above.
-    const progress = active && t ? progressText(s.id) : '';
+    // ignored. The clock is NOT here: it lives on the strip at the foot,
+    // which exists to keep this kind of second-by-second detail off the
+    // card. Nothing appears in both places.
     // The album is a second-order fact — say so: "from <album>", the
     // "from" muted. Suppressed when empty or when it repeats the title
     // (a self-titled release used to make three near-identical lines).
@@ -695,7 +714,7 @@ function renderGrid() {
       : t
         ? `<b class="title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</b><span class="artist" title="${escapeHtml(t.artist)}">${escapeHtml(t.artist)}</span>`
           + (albumShown ? `<span class="album" title="${escapeHtml(t.album)}"><span class="from">from</span> ${escapeHtml(t.album)}</span>` : '')
-          + (progress ? `<span class="progress" data-station="${escapeHtml(s.id)}">${progress}</span>` : '')
+
         // On air with nothing selected. Almost always a station still
         // filling its queue: a cold NTS station pages the show directory
         // (~11s), then a tracklist, then resolves each track to
@@ -758,12 +777,6 @@ function renderGrid() {
           ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
         </span>`
       : '';
-    // Provenance links for the marquee. The timeline that used to sit
-    // under it is the strip at the foot of the page now.
-    const links = (o) => [
-      o.sourceURL ? `<a class="tlink" href="${escapeHtml(o.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
-      o.youtubeURL ? `<a class="tlink" href="${escapeHtml(o.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
-    ].join('');
     // Origin badge: which source fed the station this track. Wire values
     // are Swift coding keys — map them to display names, pass unknown
     // ones through so new origins degrade to their raw name.
@@ -780,11 +793,10 @@ function renderGrid() {
     const info = t && active ? trackInfoHTML(t) : '';
     // The origin badge is provenance and renders on EVERY card with a
     // track — a guest scanning the grid gets to see where each channel
-    // sources from. Links stay on the active card: you dig into what
-    // you're hearing.
-    const nowLinks = t && (origin || (active && (t.sourceURL || t.youtubeURL)))
-      ? `<span class="nowlinks">${origin}${active ? links(t) : ''}</span>`
-      : '';
+    // sources from. The links that used to sit beside it are on the
+    // strip now, with the clock: both are about the one track you are
+    // actually hearing.
+    const nowLinks = t && origin ? `<span class="nowlinks">${origin}</span>` : '';
     // ✎ opens the station's editor inside this very card (see
     // editorCardHTML) — the grid stays a radio until you ask it not to.
     const editBtn = editButtonHTML(s);
@@ -835,17 +847,19 @@ function renderGrid() {
 
 // --- The master timeline ---------------------------------------------
 //
-// One strip at the foot of the page, reading left to right in the order
-// the music actually happened: what played, what is playing, what is
-// next. It used to be a block inside whichever card you were listening
-// to, where it was both the tallest thing on the card and the reason the
-// card overflowed — and it was duplicated per station for a sequence
-// only one station at a time can have.
+// One strip at the foot, and its job is to take load OFF the card: the
+// card says what is playing, the strip says how far through it we are.
+// Nothing appears in both.
 //
-// It follows the station you are listening to. With nothing playing here
-// there is no "now" to anchor a timeline on, so the strip stands down
-// rather than inventing one out of whichever station happens to be
-// first.
+// It is deliberately short. An earlier version carried the last four
+// tracks as well, which put a hedge of times and titles along the foot
+// of every screen for something the log at /history already holds in
+// full. What is left is the clock, the links for the thing you are
+// hearing, and the one track that is certain to follow.
+//
+// It follows the station you are listening to, and stands down when you
+// are not listening to anything rather than inventing a "now" out of
+// whichever station happens to be first.
 function renderTimeline() {
   if (!$tl) return;
   const s = stations.find((x) => x.id === activeId);
@@ -858,37 +872,20 @@ function renderTimeline() {
   }
   $tl.hidden = false;
 
-  const links = (o) => [
-    o.sourceURL ? `<a class="tlink" href="${escapeHtml(o.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
-    o.youtubeURL ? `<a class="tlink" href="${escapeHtml(o.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
+  const sid = escapeHtml(s.id);
+  const links = [
+    t.sourceURL ? `<a class="tlink" href="${escapeHtml(t.sourceURL)}" target="_blank" rel="noopener">source</a>` : '',
+    t.youtubeURL ? `<a class="tlink" href="${escapeHtml(t.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : '',
   ].join('');
 
-  // Recent entries still inside the display-lag window are suppressed:
-  // the strip's "now" is still naming them, and a track cannot be in two
-  // places on one timeline. No provenance links on the past entries
-  // either — five sets of them turn a one-line rail into a hedge, and
-  // the rule the cards already follow is that you dig into what you are
-  // hearing.
-  const shownKey = `${s.id}|${t.artist}|${t.title}`;
-  const past = (s.recent || [])
-    .filter((r) => `${s.id}|${r.artist}|${r.title}` !== shownKey)
-    .slice(0, 4)
-    .reverse()      // oldest first: the strip reads forwards in time
-    .map((r) => `
-      <li class="tl-past">
-        ${r.playedAt ? `<span class="ttime">${escapeHtml(fmtTime(r.playedAt))}</span>` : ''}
-        ${ownerKey()
-          ? `<button type="button" class="act act--retro" data-station="${escapeHtml(s.id)}" data-entry="${escapeHtml(r.entryID)}" title="Save to library" aria-label="Save ${escapeHtml(r.title)}">${ICON_HEART}</button>`
-          : ''}
-        <span class="ttrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
-      </li>`).join('');
-
+  // Both clocks are patched in place every second by the tick above, so
+  // they are emitted here as the same strings that tick will write.
   const now = `
     <li class="tl-now" aria-current="true">
       <span class="tl-label">${escapeHtml(s.name)}</span>
-      <span class="ttrack">${escapeHtml(t.artist)} — ${escapeHtml(t.title)}</span>
-      <span class="progress" data-station="${escapeHtml(s.id)}">${progressText(s.id)}</span>
-      ${links(t)}
+      <span class="progress" data-station="${sid}">${progressText(s.id)}</span>
+      <span class="remaining" data-station="${sid}">${remainingText(s.id)}</span>
+      ${links}
     </li>`;
 
   const next = s.nextTrack
@@ -898,14 +895,8 @@ function renderTimeline() {
       </li>`
     : '';
 
-  $tl.innerHTML = `<ol class="tl-rail">${past}${now}${next}</ol>
+  $tl.innerHTML = `<ol class="tl-rail">${now}${next}</ol>
     <a class="tl-more" href="/history">History</a>`;
-  // The rail runs past both edges; what matters is what is playing, so
-  // put that in view rather than whichever end the browser picked.
-  const el = $tl.querySelector('.tl-now');
-  if (el && typeof el.scrollIntoView === 'function') {
-    el.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }
 }
 
 // A card is a fixed rectangle, and a rectangle can be too small for what
@@ -963,10 +954,6 @@ $stations.addEventListener('click', (e) => {
       if (typeof openStationEditorById === 'function') openStationEditorById(card.dataset.id);
       return;
     }
-    if (act.classList.contains('act--retro')) {
-      sendAction(card.dataset.id, 'like', act.dataset.entry);
-      return;
-    }
     let kind = act.classList.contains('act--like') ? 'like'
       : act.classList.contains('act--boost') ? 'boost'
       : act.classList.contains('act--next') ? 'next'
@@ -987,19 +974,6 @@ $stations.addEventListener('click', (e) => {
 
 // div[role=button] doesn't get click-on-Enter/Space for free the way a
 // real <button> did — restore it so the cards stay keyboard-operable.
-// The strip carries the owner's retro-♥ on every past entry, exactly as
-// the on-card timeline did. It is outside the grid, so it needs its own
-// listener — the station comes off the button rather than off an
-// enclosing card, because the strip has no cards.
-if ($tl) {
-  $tl.addEventListener('click', (e) => {
-    if (e.target.closest('a')) return;
-    const btn = e.target.closest('.act--retro');
-    if (!btn) return;
-    sendAction(btn.dataset.station, 'like', btn.dataset.entry);
-  });
-}
-
 $stations.addEventListener('keydown', (e) => {
   // Typing in the editor must never reach the card's play/pause keys.
   if (e.target.closest && e.target.closest('.editor')) {

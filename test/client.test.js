@@ -268,7 +268,7 @@ const trackA = {
   durationSeconds: 365, origin: 'lastFM', sourceURL: null, youtubeURL: null,
 };
 
-test('adoptNow absolutizes streamURL and renders album / origin / progress / playedAt', async () => {
+test('adoptNow absolutizes streamURL; the card gets album + origin, the strip gets the clock', async () => {
   const { t, els } = boot();
   await settle();
   t.activeId = 'S1';
@@ -277,11 +277,13 @@ test('adoptNow absolutizes streamURL and renders album / origin / progress / pla
   const html = els.stations.innerHTML;
   assert.ok(html.includes('class="album"') && html.includes('LP One'), 'album line');
   assert.ok(html.includes('>Last.fm<'), 'origin badge mapped');
-  assert.ok(html.includes('0:00 / 6:05'), 'textual progress');
-  // The recent ring belongs to the strip along the foot now, not to the
-  // card — one timeline for the one station you can hear at a time.
-  assert.ok(!html.includes('class="ttime"'), 'no timeline inside the card');
-  assert.ok(els.tl.innerHTML.includes('class="ttime"'), 'recent playedAt time, on the strip');
+  assert.ok(!html.includes('0:00 / 6:05'), 'no clock on the card');
+  assert.ok(els.tl.innerHTML.includes('0:00 / 6:05'), 'textual progress, on the strip');
+  assert.ok(els.tl.innerHTML.includes('−6:05'), 'and what is left of it');
+  // The played-track list is at /history now — neither the card nor the
+  // strip carries it.
+  assert.ok(!html.includes('class="ttime"'), 'no played-track list on the card');
+  assert.ok(!els.tl.innerHTML.includes('class="ttime"'), 'nor on the strip');
 });
 
 test('progressText ticks with the clock and clamps to duration', async () => {
@@ -1349,12 +1351,15 @@ test('origin badge renders on non-active cards; links stay active-only', async (
   let html = els.stations.innerHTML;
   assert.ok(html.includes('class="origin"') && html.includes('>Last.fm<'),
     'origin badge on a non-active card');
-  assert.ok(!html.includes('x.example'), 'source link held back until active');
-  assert.ok(!html.includes('x.example'), 'source links held back until active');
+  assert.ok(!html.includes('x.example'), 'no source link on the card');
   t.activeId = 'S1';
   t.render();
   html = els.stations.innerHTML;
-  assert.ok(html.includes('x.example'), 'active card gets the links');
+  // Links moved to the strip with the clock: both describe the one
+  // track you are actually hearing, and neither belongs on a card that
+  // has to stay the same size as its neighbours.
+  assert.ok(!html.includes('x.example'), 'not even on the active card');
+  assert.ok(els.tl.innerHTML.includes('x.example'), 'the strip has them');
   assert.ok(!html.includes('>about<'), 'and no about affordance anywhere');
 });
 
@@ -1530,7 +1535,7 @@ test('overflow hint: the fade is measured, never assumed', async () => {
 // One strip, at the foot, for the one station you can actually hear. It
 // replaced a block that every card rendered separately for a sequence
 // only one station at a time can have.
-test('timeline: reads forwards in time, past then now then next', async () => {
+test('timeline: a clock for what is on air, and what follows it', async () => {
   const { t, els } = boot();
   await settle();
   t.activeId = 'S1';
@@ -1540,19 +1545,23 @@ test('timeline: reads forwards in time, past then now then next', async () => {
       currentTrack: trackA,
       nextTrack: { artist: 'Later', title: 'Song', origin: 'lastFM' },
       recent: [
-        { artist: 'Newer', title: 'Row', playedAt: 1755856900, entryID: 'e2' },
         { artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' },
+        { artist: 'Newer', title: 'Row', playedAt: 1755856900, entryID: 'e2' },
       ],
     }],
   });
   const html = els.tl.innerHTML;
-  const at = (needle) => html.indexOf(needle);
-  assert.ok(at('Older') < at('Newer'), 'the ring arrives newest-first and is reversed');
-  assert.ok(at('Newer') < at('tl-now'), 'what played comes before what is playing');
-  assert.ok(at('tl-now') < at('tl-next'), 'and what is playing before what is next');
-  assert.ok(html.includes('Artist A — Alpha'), 'now names the current track');
-  assert.ok(html.includes('Later — Song'), 'next names the next one');
+  assert.ok(html.includes('0:00 / 6:05'), 'elapsed over total');
+  assert.ok(html.includes('−6:05'), 'and how much is left');
+  assert.ok(html.includes('>One<'), 'named, so the clock belongs to a station');
+  assert.ok(html.includes('Later — Song'), 'the one track certain to follow');
   assert.ok(html.includes('/history'), 'and the log is one link away');
+  // The strip exists to keep detail OFF the card, so it must not turn
+  // into a second copy of what the card already says.
+  assert.ok(!html.includes('Alpha'), 'it does not repeat the title the card is showing');
+  // The last four tracks were a hedge along the foot of every screen for
+  // something /history holds in full.
+  assert.ok(!html.includes('Older') && !html.includes('Newer'), 'no played-track list');
 });
 
 test('timeline: stands down when you are not listening to anything', async () => {
@@ -1568,52 +1577,34 @@ test('timeline: stands down when you are not listening to anything', async () =>
   assert.strictEqual(els.tl.hidden, false);
 });
 
-test('timeline: a recent row still being announced as "now" is not shown twice', async () => {
+// A track with no known length cannot be counted down, and a made-up
+// number is worse than no number.
+test('timeline: an unknown duration gets a clock but no countdown', async () => {
   const { t, els } = boot();
   await settle();
   t.activeId = 'S1';
   t.adoptNow({
     stations: [{
       id: 'S1', slug: 's1', name: 'One', streamURL: '/streams/s1', listeners: 1,
-      currentTrack: trackA,
-      // The broadcaster puts the current track in the ring the moment it
-      // starts; the strip is still naming it as `now`.
-      recent: [
-        { artist: trackA.artist, title: trackA.title, playedAt: 1755856900, entryID: 'e9' },
-        { artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' },
-      ],
+      currentTrack: { ...trackA, durationSeconds: null }, recent: [],
     }],
   });
   const html = els.tl.innerHTML;
-  assert.strictEqual((html.match(/Alpha/g) || []).length, 1,
-    'the track on air appears once, as now');
-  assert.ok(html.includes('Older'), 'and the genuinely past row survives');
+  assert.ok(html.includes('class="progress"'), 'elapsed still counts up');
+  assert.ok(!html.includes('−'), 'but nothing is claimed about what is left');
 });
 
-test('timeline: the owner retro-♥ carries its own station', async () => {
-  const { t, els, state } = ownerBoot();
+// Elapsed floors and remaining ceilings, so the pair always accounts for
+// the whole track. Flooring both showed 0:06 next to −6:23 of a 6:30
+// track, and a clock that cannot add up looks broken.
+test('timeline: elapsed and remaining add up to the track', async () => {
+  const { t, els, state } = boot();
   await settle();
   t.activeId = 'S1';
-  t.adoptNow({
-    stations: [{
-      id: 'S1', slug: 's1', name: 'One', streamURL: '/streams/s1', listeners: 1,
-      currentTrack: trackA,
-      recent: [{ artist: 'Older', title: 'Row', playedAt: 1755856800, entryID: 'e1' }],
-    }],
-  });
-  assert.ok(els.tl.innerHTML.includes('act--retro'), 'owner gets the retro heart');
-  // The strip has no cards, so the station cannot come off an enclosing
-  // one — it has to be on the button.
-  assert.ok(els.tl.innerHTML.includes('data-station="S1"'), 'and it names its station');
-  assert.ok(els.tl.innerHTML.includes('data-entry="e1"'), 'and its entry');
-
-  const onClick = els.tl.handlers.click[0];
-  onClick({ target: {
-    closest: (sel) => (sel === 'a' ? null
-      : { dataset: { station: 'S1', entry: 'e1' } }),
-  } });
-  await settle();
-  const liked = state.fetchCalls.filter(([u]) => String(u).includes('/like'));
-  assert.strictEqual(liked.length, 1, 'the click reaches the broadcaster');
-  assert.strictEqual(JSON.parse(liked[0][1].body).entry, 'e1', 'for that entry');
+  t.adoptNow(payload({ ...trackA, durationSeconds: 390 }));   // 6:30
+  state.nowMs += 6400;                                        // 6.4s in
+  t.render();
+  const html = els.tl.innerHTML;
+  assert.ok(html.includes('0:06 / 6:30'), `elapsed floors (${html})`);
+  assert.ok(html.includes('−6:24'), 'remaining ceilings, and 0:06 + 6:24 = 6:30');
 });

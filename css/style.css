@@ -445,13 +445,6 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--dot);
   opacity: 1;
 }
-.station .act--retro {
-  padding: 0.1rem;
-}
-.station .act--retro .icon {
-  width: 1em;
-  height: 1em;
-}
 .station .tlink,
 .station .nowlinks .tlink {
   color: var(--muted);
@@ -569,31 +562,51 @@ main > .gnote { grid-column: 1 / -1; }
   font-size: var(--fs-meta);
 }
 #history .hlist { list-style: none; margin: 0; padding: 0; }
+/* Columns, not prose: time and station are fixed widths so the eye can
+   run straight down either one, and the track takes the rest. */
 #history .hlist li {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 5.5rem 10rem 1fr auto;
   align-items: baseline;
-  gap: 0.2em 0.6em;
-  padding: 0.18rem 0;
+  gap: 0.2em 1rem;
+  padding: 0.2rem 0;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
-#history .htrack { color: var(--fg); }
+#history .htrack { color: var(--fg); min-width: 0; }
 #history .htime { font-variant-numeric: tabular-nums; }
+/* Which station played it — the reason the picker above this list could
+   go away. Quiet: it is the answer to a question you did not have to ask. */
+#history .hstation {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #history .hsaved { color: var(--dot); }
+/* On a phone there is no room for four columns; the row stacks its
+   header line above the track. */
+@media (max-width: 34rem) {
+  #history .hlist li {
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0 0.8rem;
+    padding: 0.4rem 0;
+  }
+  #history .htrack { grid-column: 1 / -1; }
+}
+#history .hempty { display: block; }
 
-#history .hfilters { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.7rem; }
-#history .h-filter, #history .h-more {
+#history .h-more {
+  margin-top: 0.8rem;
   border: 1px solid var(--border);
   background: none;
   color: var(--muted);
-  border-radius: 999px;
+  border-radius: 8px;
   padding: 0.16rem 0.7rem;
   font: inherit;
   cursor: pointer;
 }
-#history .h-filter.on { color: var(--fg); border-color: var(--border-strong); }
-#history .h-more { margin-top: 0.8rem; border-radius: 8px; }
+#history .h-more:hover { color: var(--fg); border-color: var(--border-strong); }
 
 .station .icon { color: var(--card-line); }
 .station .act--like .icon--heart-filled { color: var(--dot); }
@@ -619,13 +632,6 @@ main > .gnote { grid-column: 1 / -1; }
 .station .act--like.liked {
   color: var(--dot);
   opacity: 1;
-}
-.station .act--retro {
-  padding: 0.1rem;
-}
-.station .act--retro .icon {
-  width: 1em;
-  height: 1em;
 }
 .station .tlink,
 .station .nowlinks .tlink {
@@ -1077,8 +1083,6 @@ input[type="checkbox"] { accent-color: var(--fg); }
 .tl-word { letter-spacing: 0.04em; }
 .tl-rail .ttime { font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .tl-rail .progress { font-variant-numeric: tabular-nums; }
-.tl-rail .act--retro { padding: 0.05rem; }
-.tl-rail .act--retro .icon { width: 1rem; height: 1rem; }
 
 .tl-more {
   flex: 0 0 auto;
