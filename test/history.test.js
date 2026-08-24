@@ -24,14 +24,6 @@ function makeEl() {
   };
 }
 
-// A stand-in for a clicked <button>: `closest` walks nothing, because
-// the buttons the page renders are never nested.
-const button = (cls, sid) => ({
-  classList: { contains: (c) => c === cls },
-  dataset: sid === undefined ? {} : { sid },
-  closest: (sel) => (sel === 'button' ? button(cls, sid) : null),
-});
-
 function boot(fetchImpl) {
   const el = makeEl();
   const calls = [];
@@ -98,23 +90,26 @@ test('a failed fetch ends the log rather than spinning', async () => {
   assert.ok(el.innerHTML.includes('Nothing played yet'), 'and it stops saying Loading');
 });
 
-test('filter: client-side over accumulated rows, and it names deleted stations', async () => {
+// One list, and every row says where it came from. The station picker
+// that used to sit above it made you answer a question before the log
+// would answer yours.
+test('every row names its station, deleted ones included', async () => {
   const rows = [
     entry(0),
     entry(1, { stationID: 's2', station: null }),
-    entry(2),
+    entry(2, { station: 'Techno' }),
   ];
   const { el } = boot(async () => ({ ok: true, json: async () => ({ entries: rows }) }));
   await settle();
-  const shown = () => (el.innerHTML.match(/class="htrack"/g) || []).length;
+  assert.strictEqual((el.innerHTML.match(/class="htrack"/g) || []).length, 3,
+    'nothing is filtered out');
+  assert.strictEqual((el.innerHTML.match(/class="hstation"/g) || []).length, 3,
+    'and every row carries its origin');
+  assert.ok(el.innerHTML.includes('>One<') && el.innerHTML.includes('>Techno<'),
+    'named per row, not grouped');
   assert.ok(el.innerHTML.includes('(deleted station)'),
     'a station that no longer exists still labels its rows');
-  assert.strictEqual(shown(), 3);
-
-  el.click(button('h-filter', 's2'));
-  assert.strictEqual(shown(), 1, 'filter narrows without re-fetching');
-  el.click(button('h-filter', ''));
-  assert.strictEqual(shown(), 3, 'and All restores');
+  assert.ok(!el.innerHTML.includes('h-filter'), 'and there is no picker');
 });
 
 test('rows escape what the broadcaster sent', async () => {

@@ -46,11 +46,10 @@ let rows = [];
 let offset = 0;
 let done = false;
 let loading = false;
-let filter = null;   // stationID, null = all
 
 async function loadHistory(more) {
   if (loading) return;
-  if (!more) { rows = []; offset = 0; done = false; filter = null; }
+  if (!more) { rows = []; offset = 0; done = false; }
   loading = true;
   render();
   try {
@@ -71,34 +70,18 @@ async function loadHistory(more) {
   render();
 }
 
-function filterChips() {
-  // Distinct stations from the loaded rows. `station` is the display
-  // name at play time and null once the station is deleted; stationID
-  // survives deletion, so the filter keys on the ID and labels with the
-  // name. Filtering is client-side over the accumulated rows and
-  // survives "More".
-  const seen = new Map();
-  rows.forEach((r) => {
-    if (r.stationID && !seen.has(r.stationID)) {
-      seen.set(r.stationID, r.station || '(deleted station)');
-    }
-  });
-  if (seen.size < 2) return '';
-  const chips = [...seen.entries()].map(([sid, name]) =>
-    `<button type="button" class="chip h-filter${filter === sid ? ' on' : ''}"
-      data-sid="${escapeHtml(sid)}">${escapeHtml(name)}</button>`).join('');
-  return `<div class="chips hfilters">
-    <button type="button" class="chip h-filter${!filter ? ' on' : ''}" data-sid="">All</button>
-    ${chips}</div>`;
-}
-
+// One list, newest first, and every row says where it came from. There
+// is no station picker: the log's whole job is "what has this radio
+// played", and a filter turned that into a question you had to answer
+// before you got an answer. `station` is the display name at play time
+// and null once the station has been deleted — the row still says so
+// rather than going quiet about its origin.
 function render() {
   if (!$history) return;
-  const list = rows
-    .filter((r) => !filter || r.stationID === filter)
-    .map((r) => `
+  const list = rows.map((r) => `
     <li>
       <span class="htime">${escapeHtml(fmtTime(r.playedAt))}</span>
+      <span class="hstation">${escapeHtml(r.station || '(deleted station)')}</span>
       <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
       ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
       ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
@@ -109,7 +92,6 @@ function render() {
     ? `<button type="button" class="btn h-more" ${loading ? 'disabled' : ''}>More</button>`
     : '';
   $history.innerHTML = `
-    ${filterChips()}
     <ul class="hlist">${list || `<li class="hempty">${empty}</li>`}</ul>
     ${more}`;
 }
@@ -119,10 +101,6 @@ if ($history) {
     const btn = e.target.closest('button');
     if (!btn) return;
     if (btn.classList.contains('h-more')) return void loadHistory(true);
-    if (btn.classList.contains('h-filter')) {
-      filter = btn.dataset.sid || null;
-      render();
-    }
   });
   loadHistory(false);
 }
