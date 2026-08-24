@@ -77,8 +77,13 @@ main {
   min-height: calc(100dvh - var(--topbar-h));
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(var(--cols, 1), 1fr);
-  grid-template-rows: repeat(var(--rows, 1), auto);
+  /* The shape follows the space, not the station count. A card wants at
+     least 24rem to be readable; the browser fits as many of those across
+     as it can and wraps the rest. Two stations therefore stand as two
+     tall columns on a desktop and stack into rows on a phone, with
+     neither case written down anywhere. */
+  grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: var(--gap);
   padding: var(--gap);
   padding-bottom: calc(var(--gap) + env(safe-area-inset-bottom));
@@ -94,6 +99,8 @@ main {
   margin: 0;
   font-size: 1rem;
 }
+
+main > .gnote { grid-column: 1 / -1; }
 
 .station {
   position: relative;
@@ -147,6 +154,7 @@ main {
   outline: 2px solid var(--border-strong);
   outline-offset: -4px;
 }
+.station.active .now { justify-content: safe flex-end; }
 .station.active {
   /* Deeper in the station's OWN colour, never a neutral highlight: the
      card you are listening to must not stop looking like that station. */
@@ -193,10 +201,11 @@ main {
   /* `safe` centers while the block fits and falls back to start-aligned
      the moment it doesn't: plain centering would push the first line
      out past the scroll origin, where it can never be read. */
-  /* Anchored to the foot of its row, so what is playing sits directly
-     above what is known about it instead of floating with a void
-     between them. The air collects under the station's name. */
-  justify-content: safe flex-end;
+  /* Centred while the card is quiet — a tall column with its only line
+     shoved to the bottom reads as a mistake. The card being listened to
+     grows a dossier underneath, and there the marquee drops to the foot
+     of its row so the two sit together (see .station.active below). */
+  justify-content: safe center;
   text-align: left;
   gap: 0.3em;
   min-width: 0;
@@ -745,16 +754,12 @@ dialog::backdrop {
 /* keep the grid clear of the collapsed panel bar */
 
 
-/* force 1-col layout on narrow viewports regardless of station count */
+/* No narrow-viewport breakpoint: auto-fit above already collapses to a
+   single column the moment two cards stop fitting, at whatever width
+   that turns out to be. A card does need room to breathe when it is the
+   only one on screen, though. */
 @media (max-width: 560px) {
-  main {
-    grid-template-columns: 1fr;
-    grid-template-rows: repeat(var(--count, 1), minmax(8rem, 1fr));
-    height: auto;
-    min-height: 100dvh;
-    overflow-y: auto;
-  }
-  html, body { overflow: auto; height: auto; }
+  .station { min-height: 60dvh; }
 }
 
 /* owner login — deliberately quiet. Guests should read it as furniture,

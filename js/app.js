@@ -416,20 +416,6 @@ function volumeControlHTML() {
   </span>`;
 }
 
-// Grid geometry — aims for the shape Jonas described:
-// 1 → 1×1, 2 → 1×2 stacked, 3 → 1×3 stacked, 4 → 2×2, 5–6 → 3×2, then sqrt-ish.
-function gridDims(n) {
-  if (n <= 1) return [1, 1];
-  if (n === 2) return [1, 2];
-  if (n === 3) return [1, 3];
-  if (n === 4) return [2, 2];
-  if (n <= 6) return [3, 2];
-  if (n <= 9) return [3, 3];
-  const cols = Math.ceil(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
-  return [cols, rows];
-}
-
 // One ingestion path: SSE frames and poll responses both land here, so
 // rendering can't diverge between transports.
 function adoptNow(data) {
@@ -652,9 +638,6 @@ function renderGrid() {
   const canCreate = canManageStations();
   const cards = gridStations();
   if (!cards.length && !canCreate) {
-    $stations.style.setProperty('--cols', 1);
-    $stations.style.setProperty('--rows', 1);
-    $stations.style.setProperty('--count', 1);
     $stations.innerHTML = '<p class="empty">No stations broadcasting right now.</p>';
     return;
   }
@@ -664,10 +647,10 @@ function renderGrid() {
     ? `<p class="gnote" role="alert">${escapeHtml(ownerStationsError)}</p>`
     : '';
   const cardCount = cards.length + (canCreate ? 1 : 0);
-  const [cols, rows] = gridDims(cardCount);
-  $stations.style.setProperty('--cols', cols);
-  $stations.style.setProperty('--rows', rows + (rosterNote ? 1 : 0));
-  $stations.style.setProperty('--count', cardCount + (rosterNote ? 1 : 0));
+  // No JS geometry any more: the grid is auto-fit in CSS, so the shape
+  // follows the space rather than the station count. Two stations are
+  // two tall columns on a desktop and two stacked rows on a phone
+  // without either case being written down.
 
   const playing = !$audio.paused && $audio.readyState >= 3;
   // Loading = user asked to play (audio element has src + isn't paused)
@@ -753,11 +736,7 @@ function renderGrid() {
           <button type="button" class="act act--share" title="Share this track" aria-label="Share this track">
             ${ICON_SHARE}
           </button>
-          ${note
-            ? `<span class="note" role="status">${escapeHtml(note)}</span>`
-            : (active && s.listeners > 1
-              ? `<span class="note" title="Skips and next affect every listener">${s.listeners} listening</span>`
-              : '')}
+          ${note ? `<span class="note" role="status">${escapeHtml(note)}</span>` : ''}
         </span>`
       : '';
     // Timeline on the active card: the certain next track, then what
@@ -796,8 +775,11 @@ function renderGrid() {
     // What's known about the track on air, written onto the station
     // itself — no toggle, no panel, nothing to click. Only the current
     // track earns it; the recent rows stay a bare list.
-    if (t) ensureTrackInfo(s.id, t);
-    const info = t ? trackInfoHTML(t) : '';
+    // Only the card being listened to carries a dossier. On the others
+    // it is a wall of text about music you are not hearing — and the
+    // fetch that fills it is wasted too, so it never happens.
+    if (t && active) ensureTrackInfo(s.id, t);
+    const info = t && active ? trackInfoHTML(t) : '';
     // The origin badge is provenance and renders on EVERY card with a
     // track — a guest scanning the grid gets to see where each channel
     // sources from. Links stay on the active card: you dig into what
