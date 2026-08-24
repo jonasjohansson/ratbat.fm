@@ -142,6 +142,7 @@ function boot(opts = {}) {
   vm.runInContext(panelsSource, ctx);
   vm.runInContext(`
 ;globalThis.__test = {
+  elapsedOffsetMs,
   suggestedName, syncAutoName, toggleTag, onControlInput, addTagFromInput,
   renderTopbar, policyRowHTML, healthStripHTML, fmtSpan,
   loadOwnerStations, renderEditor, renderTimeline,
@@ -1712,4 +1713,72 @@ test('summary: the line under the name goes when it only repeats it', async () =
     'but a named station still shows what it is made of');
   assert.ok(card('NTS Disco', ['disco', 'soul']).includes('class="setsum"'),
     'and so does one whose tags have outgrown its name');
+});
+
+// --- Joining a track that is already playing --------------------------
+
+// A live stream carries no position, so a browser that joins mid-track
+// used to start its own clock at zero: reload three minutes into a
+// six-minute track and the strip read "0:00 / 6:30" for something two
+// thirds gone, with the countdown wrong by the same amount.
+test('reload: the clock starts where the broadcast actually is', async () => {
+  const { t, els, state } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, durationSeconds: 390, elapsedSeconds: 180 }));
+  const html = els.tl.innerHTML;
+  assert.ok(html.includes('3:00 / 6:30'), `three minutes in (${html})`);
+  assert.ok(html.includes('−3:30'), 'and the countdown agrees');
+
+  // And it keeps counting from there rather than snapping back.
+  state.nowMs += 5000;
+  t.render();
+  assert.ok(els.tl.innerHTML.includes('3:05 / 6:30'), 'it carries on from there');
+});
+
+test('reload: an old broadcaster that says nothing counts from now', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.activeId = 'S1';
+  // No `elapsedSeconds` key at all — the field did not exist before.
+  t.adoptNow(payload({ ...trackA, durationSeconds: 390 }));
+  assert.ok(els.tl.innerHTML.includes('0:00 / 6:30'),
+    'degrades to the behaviour it replaces, not to a broken clock');
+});
+
+test('elapsedOffsetMs: only a real, forward position counts', async () => {
+  const { t } = boot();
+  await settle();
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: 42 }), 42000);
+  // null is "not the current track" — the key is always present on the
+  // wire, so its absence and its nullity mean the same thing here.
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: null }), 0);
+  assert.strictEqual(t.elapsedOffsetMs({}), 0);
+  assert.strictEqual(t.elapsedOffsetMs(null), 0);
+  // Nothing a broken server sends should push the clock backwards or off
+  // the end of the numbers.
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: -5 }), 0);
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: Infinity }), 0);
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: 'soon' }), 0);
+});
+
+// The lag machinery exists so the clock matches what is in your ears, one
+// buffer behind the server. A track change watched live must not be
+// re-seeded from the wire, or the display jumps forward by that buffer.
+test('a track change watched live keeps the display lag', async () => {
+  const { t, els, state } = boot();
+  await settle();
+  t.activeId = 'S1';
+  t.adoptNow(payload({ ...trackA, durationSeconds: 390, elapsedSeconds: 0 }));
+  // The broadcaster moves on, and says the new track is already 8s in —
+  // which is the buffer, not something we missed.
+  const next = { ...trackA, title: 'Beta', durationSeconds: 300, elapsedSeconds: 8 };
+  state.nowMs += 1000;
+  t.adoptNow(payload(next));
+  state.nowMs += 20000;          // past any display delay
+  t.render();
+  const html = els.tl.innerHTML;
+  assert.ok(!html.includes('0:08 / 5:00') && !html.includes('0:28 / 5:00'),
+    `not seeded from the wire (${html})`);
+  assert.ok(html.includes('/ 5:00'), 'the new track is showing');
 });
