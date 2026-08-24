@@ -89,8 +89,24 @@ function displayTrack(s) {
     // Nothing shown yet (or nobody's listening to this card) — no lag to
     // honor, adopt immediately. `shownAt` is stamped only on a real track
     // change so the elapsed clock keeps counting across renders.
+    //
+    // Backdated by whatever the broadcaster says has already played. This
+    // is the branch a reload lands in, and it is the only one where the
+    // track might have started before we existed: reload three minutes
+    // into a six-minute track and, with `shownAt` at now, the clock read
+    // "0:00 / 6:30" for something two thirds gone.
+    //
+    // Deliberately NOT applied to the settle branch below. There, we
+    // watched the track change while listening, and `shownAt` is stamped
+    // when the track is DISPLAYED — which is one buffer-latency behind
+    // the broadcaster on purpose, so the clock matches what is in your
+    // ears rather than what has left the server.
     if (st.shownKey !== incoming) {
-      displayState.set(s.id, { shownKey: incoming, shownTrack: s.currentTrack, shownAt: performance.now() });
+      displayState.set(s.id, {
+        shownKey: incoming,
+        shownTrack: s.currentTrack,
+        shownAt: performance.now() - elapsedOffsetMs(s.currentTrack),
+      });
     }
     return { track: s.currentTrack, settled: true };
   }
@@ -112,6 +128,19 @@ function displayTrack(s) {
     return { track: s.currentTrack, settled: true };
   }
   return { track: st.shownTrack, settled: false };
+}
+
+// How far into the track the broadcaster says it already is, in ms.
+//
+// Only meaningful when adopting a track we did not watch start. Zero for
+// anything the wire doesn't describe: an older broadcaster sends no
+// `elapsedSeconds` at all, and null there means "not the current track",
+// so both degrade to counting from now — which is exactly the behaviour
+// this replaces.
+function elapsedOffsetMs(track) {
+  const e = track && track.elapsedSeconds;
+  if (typeof e !== 'number' || !isFinite(e) || e <= 0) return 0;
+  return e * 1000;
 }
 
 // mm:ss for elapsed/duration — progress is textual on purpose, no bars.
