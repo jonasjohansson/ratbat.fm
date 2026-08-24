@@ -30,7 +30,6 @@
   --fs-name: clamp(1rem, 2.4vmin, 1.45rem);
   --fs-card: clamp(0.85rem, 1.7vmin, 1rem);
   --fs-meta: clamp(0.68rem, 1.25vmin, 0.78rem);
-  --topbar-h: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -55,27 +54,40 @@
 html, body {
   margin: 0;
   padding: 0;
-  /* min-, not a fixed height: the page has to grow past the first
-     screen now that the play history follows the grid. */
-  min-height: 100%;
   scrollbar-width: none;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
   line-height: var(--line);
   -webkit-font-smoothing: antialiased;
-  /* The page scrolls: the grid fills the first screen and the play
-     history sits under it, a scroll away. */
   overflow-x: hidden;
 }
 * { box-sizing: border-box; }
 
+/* The front page does not scroll. It is exactly one screen: controls at
+   the top, every station in the middle, the timeline along the foot. The
+   log that used to make the page taller than the screen lives at
+   /history now, which is what lets this hold. */
+body {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+/* Except the history page, which is a document and scrolls like one. */
+body.page-history {
+  height: auto;
+  min-height: 100dvh;
+  display: block;
+  overflow: visible;
+}
+
 main {
-  /* The first screen's worth of grid, as a floor rather than a ceiling:
-     cards grow when a track has a lot to say or a form is open, and the
-     PAGE takes the scroll. Nothing nested scrolls, so the wheel does the
-     same thing wherever the pointer happens to be. */
-  min-height: calc(100dvh - var(--topbar-h));
+  /* No min-height and no header arithmetic: main IS the 1fr row of the
+     page grid, so it gets whatever the header and the strip leave,
+     measured by the browser rather than guessed at in a calc(). The
+     --topbar-h variable that used to feed that guess is gone with it. */
+  min-height: 0;
   width: 100%;
   display: grid;
   /* The shape follows the space, not the station count. A card wants at
@@ -84,12 +96,12 @@ main {
      tall columns on a desktop and stack into rows on a phone, with
      neither case written down anywhere. */
   grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
-  /* A card is a fixed height, not a share of what is left over. Rows
-     sized by `1fr` meant the same station was a different shape
-     depending on how many others existed and how much any of them had
-     to say; every card is now the same rectangle, and content fits it
-     rather than the other way round. */
-  grid-auto-rows: clamp(18rem, 44dvh, 26rem);
+  /* `1fr` works here where it did not before. main used to have a
+     min-height, so a fraction had no definite total to be a fraction OF
+     and the rows grew to their content instead; it is a fixed-height
+     grid row now, so every card really is an equal share of the space,
+     and they all fit on the screen at once by construction. */
+  grid-auto-rows: minmax(0, 1fr);
   gap: var(--gap);
   padding: var(--gap);
   padding-bottom: calc(var(--gap) + env(safe-area-inset-bottom));
@@ -433,37 +445,6 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--dot);
   opacity: 1;
 }
-/* Timeline — the certain next track + what just played. Active card only. */
-.station .timeline {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-}
-.station .tnext {
-  overflow-wrap: anywhere;
-  font-style: italic;
-}
-.station .trecent {
-  list-style: none;
-  margin: 0.35em 0 0;
-  padding: 0;
-}
-.station .trecent li {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.2em 0.45em;
-  min-width: 0;
-  line-height: 1.6;
-}
-.station .trecent .ttrack {
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.station .trecent .ttime {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
 .station .act--retro {
   padding: 0.1rem;
 }
@@ -527,7 +508,6 @@ main > .gnote { grid-column: 1 / -1; }
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-meta);
   color: var(--muted);
-  min-height: var(--topbar-h);
 }
 #topbar[hidden] { display: none; }
 #topbar .pol {
@@ -564,15 +544,29 @@ main > .gnote { grid-column: 1 / -1; }
 
 #topbar .ferror { color: var(--danger); }
 
-#history {
-  padding: 1.6rem calc(var(--gap) + 0.4rem) calc(3rem + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--border);
+/* --- The play history page ------------------------------------------ */
+#hhead {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1.4rem calc(var(--gap) + 0.4rem) 0;
+}
+#hhead h1 {
+  margin: 0;
+  font-size: var(--fs-name);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.hback {
+  color: var(--muted);
+  text-decoration: none;
   font-size: var(--fs-meta);
 }
-#history h2 {
-  margin: 0 0 0.6rem;
-  font-size: clamp(0.95rem, 2.2vmin, 1.15rem);
-  font-weight: 600;
+.hback:hover { color: var(--fg); }
+
+#history {
+  padding: 1.2rem calc(var(--gap) + 0.4rem) calc(3rem + env(safe-area-inset-bottom));
+  font-size: var(--fs-meta);
 }
 #history .hlist { list-style: none; margin: 0; padding: 0; }
 #history .hlist li {
@@ -625,37 +619,6 @@ main > .gnote { grid-column: 1 / -1; }
 .station .act--like.liked {
   color: var(--dot);
   opacity: 1;
-}
-/* Timeline — the certain next track + what just played. Active card only. */
-.station .timeline {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-}
-.station .tnext {
-  overflow-wrap: anywhere;
-  font-style: italic;
-}
-.station .trecent {
-  list-style: none;
-  margin: 0.35em 0 0;
-  padding: 0;
-}
-.station .trecent li {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.2em 0.45em;
-  min-width: 0;
-  line-height: 1.6;
-}
-.station .trecent .ttrack {
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.station .trecent .ttime {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
 }
 .station .act--retro {
   padding: 0.1rem;
@@ -840,16 +803,23 @@ dialog::backdrop {
 }
 
 /* While a form is open the grid gives up its fixed rows: the editing
-   card grows to fit, the others keep a readable minimum, and the page
-   scrolls. A form cut off at a card edge is not a form. */
+   card grows to fit and the others keep a readable minimum. A form cut
+   off at a card edge is not a form.
+   The PAGE cannot take that scroll any more — it is exactly one screen
+   now — so the grid takes it instead. The strip stays pinned at the foot
+   while you scroll the form, which is the right relationship anyway: the
+   radio does not stop being on air because you opened a settings pane. */
 main.editing {
   height: auto;
   grid-template-rows: none;
   grid-auto-rows: auto;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
+main.editing::-webkit-scrollbar { display: none; }
 main.editing .station { min-height: 40vh; }
 main.editing .station--editing { min-height: 0; }
-main.editing .station .now { overflow: visible; }
+main.editing .station .cardbody { overflow: visible; }
 
 /* --- The station editor, inside its card ----------------------------- *
  * The form replaces the card's now-playing body while it is open, so it
@@ -1039,3 +1009,90 @@ input[type="range"]:focus-visible { outline: 2px solid var(--border-strong); out
 
 /* Checkboxes too — the same ink, no system blue. */
 input[type="checkbox"] { accent-color: var(--fg); }
+
+
+/* --- The master timeline --------------------------------------------- *
+ * One line along the foot of the page, reading forwards in time: what
+ * played, what is playing, what is next. It replaces a block that was
+ * repeated inside every card for a sequence only one station at a time
+ * can have.
+ *
+ * Horizontal, because time is: the rail runs off both edges and
+ * render() scrolls what is playing into the middle of it. */
+#tl {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding: 0.5rem calc(var(--gap) + 0.4rem)
+           calc(0.5rem + env(safe-area-inset-bottom));
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+#tl[hidden] { display: none; }
+
+.tl-rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* One line: the strip is a strip. A rail that wrapped would push the
+     grid off the screen, which is the whole thing this page promises
+     not to do. */
+  white-space: nowrap;
+}
+.tl-rail::-webkit-scrollbar { display: none; }
+
+.tl-rail li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45em;
+  flex: 0 0 auto;
+}
+/* A hairline between entries instead of a bullet: the rail is a line
+   through time and the marks on it are where the tracks changed. */
+.tl-rail li + li::before {
+  content: "";
+  align-self: center;
+  width: 1px;
+  height: 0.9em;
+  margin-right: 0.95rem;
+  background: var(--border);
+}
+.tl-past { opacity: 0.72; }
+/* What is on air is the anchor: full ink, and the only bold thing here. */
+.tl-now .ttrack { color: var(--fg); font-weight: 600; }
+.tl-next { font-style: italic; }
+/* The label on `now` is the STATION'S NAME, so it is left exactly as the
+   owner typed it — lowercasing belongs to the one word this page wrote
+   itself. */
+.tl-label { color: var(--muted); }
+.tl-word { letter-spacing: 0.04em; }
+.tl-rail .ttime { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.tl-rail .progress { font-variant-numeric: tabular-nums; }
+.tl-rail .act--retro { padding: 0.05rem; }
+.tl-rail .act--retro .icon { width: 1rem; height: 1rem; }
+
+.tl-more {
+  flex: 0 0 auto;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.14rem 0.7rem;
+}
+.tl-more:hover { color: var(--fg); border-color: var(--border-strong); }
+
+/* On a phone the rail is most of the width; the link still has to fit. */
+@media (max-width: 30rem) {
+  #tl { gap: 0.6rem; }
+  .tl-rail { gap: 1rem; }
+  .tl-rail li + li::before { margin-right: 0.6rem; }
+}

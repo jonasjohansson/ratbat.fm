@@ -43,7 +43,6 @@ const SORT_LABELS = { date: 'Newest', pop: 'Popular' };
 // open.
 
 const $topbar = document.getElementById('topbar');
-const $historySection = document.getElementById('history');
 
 // The header row: app-wide selection knobs, laid out in one line, owner
 // only. Everything per-station lives on its own card, so what is left
@@ -803,90 +802,10 @@ function removeRegion(code) {
   renderEditor();
 }
 
-// --- Play history panel -----------------------------------------------
-
-// The DB-backed log, not the 5-track ring on the cards. Moved here from
-// app.js; gains offset paging and a per-station filter over what the
-// server already sends (stationID has always been on the wire, ignored
-// until now).
-let historyRows = [];
-let historyOffset = 0;
-let historyDone = false;
-let historyLoading = false;
-let historyFilter = null; // stationID, null = all
-
-const HISTORY_PAGE = 100;
-
-async function loadHistory(more) {
-  if (historyLoading) return;
-  if (!more) {
-    historyRows = [];
-    historyOffset = 0;
-    historyDone = false;
-    historyFilter = null;
-  }
-  historyLoading = true;
-  renderHistorySection();
-  try {
-    const res = await fetch(
-      `${API_BASE}/history?limit=${HISTORY_PAGE}&offset=${historyOffset}`,
-      { cache: 'no-store' });
-    const data = await res.json();
-    const page = data.entries || [];
-    historyRows = historyRows.concat(page);
-    historyOffset += page.length;
-    // A short page is the end of the log — the server pages by offset
-    // (limit capped at 200), so "fewer than asked" means "no more".
-    historyDone = page.length < HISTORY_PAGE;
-  } catch {
-    historyDone = true;
-  }
-  historyLoading = false;
-  renderHistorySection();
-}
-
-function historyFilterChips() {
-  // Distinct stations from the loaded rows. `station` is the display
-  // name at play time and null once the station is deleted; stationID
-  // survives deletion, so the filter keys on the ID and labels with
-  // the name. Filtering is client-side over the accumulated rows and
-  // survives "More".
-  const seen = new Map();
-  historyRows.forEach((r) => {
-    if (r.stationID && !seen.has(r.stationID)) {
-      seen.set(r.stationID, r.station || '(deleted station)');
-    }
-  });
-  if (seen.size < 2) return '';
-  const chips = [...seen.entries()].map(([sid, name]) =>
-    `<button type="button" class="chip h-filter${historyFilter === sid ? ' on' : ''}"
-      data-sid="${escapeHtml(sid)}">${escapeHtml(name)}</button>`).join('');
-  return `<div class="chips hfilters">
-    <button type="button" class="chip h-filter${!historyFilter ? ' on' : ''}" data-sid="">All</button>
-    ${chips}</div>`;
-}
-
-function renderHistorySection() {
-  if (!$historySection) return;
-  const rows = historyRows
-    .filter((r) => !historyFilter || r.stationID === historyFilter)
-    .map((r) => `
-    <li>
-      <span class="htime">${escapeHtml(fmtTime(r.playedAt))}</span>
-      <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
-      ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
-      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
-      ${r.youtubeURL ? `<a class="tlink" href="${escapeHtml(r.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : ''}
-    </li>`).join('');
-  const more = !historyDone && historyRows.length
-    ? `<button type="button" class="btn h-more" ${historyLoading ? 'disabled' : ''}>More</button>`
-    : '';
-  $historySection.innerHTML = `
-    <h2>Play history</h2>
-    ${historyFilterChips()}
-    <ul class="hlist">${rows || '<li class="hempty">No history yet.</li>'}</ul>
-    ${more}`;
-}
+// The play log lives at /history now, on its own page and in its own
+// script. It is the one unbounded thing on this site, and the grid's
+// promise — every station visible at a glance, no page scroll — cannot
+// hold with a log underneath it. See js/history.js.
 
 // --- Hooks app.js pokes (guarded there with typeof) -------------------
 
@@ -910,12 +829,6 @@ function onControlClick(e) {
   const btn = e.target.closest('button');
   if (!btn) return;
   if (btn.classList.contains('vol-mute')) return setVolume(null, !muted);
-  // History
-  if (btn.classList.contains('h-more')) return void loadHistory(true);
-  if (btn.classList.contains('h-filter')) {
-    historyFilter = btn.dataset.sid || null;
-    return renderHistorySection();
-  }
   // Editor
   if (btn.classList.contains('f-chip')) return toggleTag(btn.dataset.tag);
   if (btn.classList.contains('f-tagmatch')) {
@@ -1008,10 +921,3 @@ if ($topbar) {
   renderTopbar();
 }
 
-if ($historySection) {
-  $historySection.addEventListener('click', onControlClick);
-  renderHistorySection();
-  // Public, and below the fold: fetch it once at boot so scrolling down
-  // always lands on something.
-  loadHistory(false);
-}
