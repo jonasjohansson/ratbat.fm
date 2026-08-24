@@ -70,7 +70,12 @@ async function loadHistory(more) {
   render();
 }
 
-// One list, newest first, and every row says where it came from. There
+// One list, newest first, and every row says where it came from.
+//
+// The heart and the two links share ONE cell rather than taking a column
+// each: the row is a four-column grid, and a track with both `source`
+// and `yt` was a fifth child, which the grid put on a line of its own
+// underneath — a stray "yt" hanging below every row. There
 // is no station picker: the log's whole job is "what has this radio
 // played", and a filter turned that into a question you had to answer
 // before you got an answer. `station` is the display name at play time
@@ -83,9 +88,11 @@ function render() {
       <span class="htime">${escapeHtml(fmtTime(r.playedAt))}</span>
       <span class="hstation">${escapeHtml(r.station || '(deleted station)')}</span>
       <span class="htrack">${escapeHtml(r.artist)} — ${escapeHtml(r.title)}</span>
-      ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
-      ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
-      ${r.youtubeURL ? `<a class="tlink" href="${escapeHtml(r.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : ''}
+      <span class="hmeta">
+        ${r.saved ? '<span class="hsaved" title="In your library">♥</span>' : ''}
+        ${r.sourceURL ? `<a class="tlink" href="${escapeHtml(r.sourceURL)}" target="_blank" rel="noopener">source</a>` : ''}
+        ${r.youtubeURL ? `<a class="tlink" href="${escapeHtml(r.youtubeURL)}" target="_blank" rel="noopener">yt</a>` : ''}
+      </span>
     </li>`).join('');
   const empty = loading ? 'Loading…' : 'Nothing played yet.';
   const more = !done && rows.length
