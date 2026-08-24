@@ -818,7 +818,16 @@ dialog::backdrop {
 main.editing {
   height: auto;
   grid-template-rows: none;
-  grid-auto-rows: auto;
+  /* `min-content`, NOT `auto`. `auto` maxes out at max-content, and the
+     max-content layout of the form inside is nothing like its real one:
+     the editor's columns are `repeat(auto-fit, minmax(14rem, 1fr))`, so
+     measured against unbounded width they fan out into one wide, short
+     row. The grid then sized the row from that fiction — a 390px row
+     around a 645px form, which spilled out past the card's dashed
+     border because an open editor turns `overflow: hidden` off.
+     min-content is measured at the width the card actually has, so it
+     can never come out shorter than what has to fit. */
+  grid-auto-rows: min-content;
   overflow-y: auto;
   scrollbar-width: none;
 }
