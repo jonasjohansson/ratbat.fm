@@ -741,17 +741,36 @@ function editorHTML(ed) {
         ? '<p class="fhint">Library radio plays only tracks you own.</p>'
         : `<label class="check"><input type="checkbox" class="f-excludeowned"${ed.excludeOwnedLibrary ? ' checked' : ''}> Only music I don’t own</label>`}
     </div>
-    ${ed.error ? `<p class="ferror field--wide" role="alert">${escapeHtml(ed.error)}</p>` : ''}
-    <div class="frow field--wide">
-      <button type="button" class="btn f-cancel" ${saving}>Cancel</button>
-      <button type="button" class="btn btn--primary f-save" ${saving}>${ed.mode === 'create' ? 'Create' : 'Save'}</button>
-      ${ed.mode === 'edit' && ed.broadcasting
-        ? `<button type="button" class="btn f-saverestart" ${saving}>Save &amp; restart station</button>` : ''}
-      ${ed.mode === 'edit'
-        ? `<button type="button" class="btn btn--danger f-delete" ${saving}>Delete station</button>` : ''}
-    </div>
+    ${ed.error ? `<p class="ferror field--wide" role="alert">${escapeHtml(ed.error)}</p>` : ''}`;
+}
+
+// The editor's actions, rendered into the card's HEAD rather than the
+// foot of the form: the × lands exactly where the cog was, so the same
+// spot opens the settings and closes them again. Icons, because the row
+// has to share a line with the station's name — every one of them
+// carries its words in title + aria-label, which is also what makes
+// them findable to anyone not looking at the glyph.
+//
+// Called from app.js's card builders (typeof-guarded there: this file
+// evaluates second). It reads ICON_* and escapeHtml from app.js, the
+// same shared global scope everything else here uses.
+function editorNavHTML() {
+  const ed = editor;
+  if (!ed) return '';
+  const saving = ed.saving ? 'disabled' : '';
+  const creating = ed.mode === 'create';
+  const act = (cls, label, icon, extra = '') =>
+    `<button type="button" class="act ${cls}${extra}" ${saving}
+      title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</button>`;
+  return `<span class="editnav">
+    ${ed.mode === 'edit' ? act('f-delete', 'Delete station', ICON_TRASH, ' act--danger') : ''}
     ${ed.mode === 'edit' && ed.broadcasting
-      ? `<p class="fhint field--wide">Restart cuts the track that’s playing for every listener.</p>` : ''}`;
+      ? act('f-saverestart',
+          'Save and restart the station — this cuts the track playing now, for every listener',
+          ICON_RESTART) : ''}
+    ${act('f-save', creating ? 'Create station' : 'Save changes', ICON_CHECK)}
+    ${act('f-cancel', creating ? 'Discard this station' : 'Close settings', ICON_CLOSE)}
+  </span>`;
 }
 
 function toggleTag(tag) {

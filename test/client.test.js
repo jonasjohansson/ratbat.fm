@@ -39,6 +39,10 @@ function makeEl() {
     addEventListener(name, fn) { (this.handlers[name] = this.handlers[name] || []).push(fn); },
     emit(name) { (this.handlers[name] || []).forEach((fn) => fn({ target: this })); },
     querySelector: () => null,
+    // A stub DOM has no layout, so it has no elements worth measuring
+    // for overflow. Tests that care about renderOverflowHints drive it
+    // with their own list instead.
+    querySelectorAll: () => [],
     hidden: false,
     // <dialog> surface — no showModal on purpose: the delete confirm
     // then takes its native-prompt fallback, which the sandbox `prompt`
@@ -160,6 +164,7 @@ function boot(opts = {}) {
   deleteStationFlow, submitEditor,
   loadPolicy, setPolicy, policySectionHTML, onControlChange,
   openNewStationFlow, openStationEditorById, closeEditor, editorHTML, loadVocab,
+  editorNavHTML,
   get inlineEditorId() { return inlineEditorId; },
   get capabilities() { return capabilities; },
   get activePanel() { return activePanel; },
@@ -985,9 +990,18 @@ test('volume: a browser that refuses the setting is never offered the control', 
 
 // A synthetic DOM event good enough for delegation: `closest` answers
 // for the selectors the handlers actually ask about.
+// `closest` takes a selector LIST, and the handlers under test use one
+// ('.editor, .editnav'). A stub that only did exact key lookup silently
+// answered null for every list, which is precisely the kind of drift
+// between test and browser this test exists to catch.
 const clickEvt = (matches) => ({
   target: {
-    closest: (sel) => (matches[sel] === undefined ? null : matches[sel]),
+    closest: (sel) => {
+      for (const part of sel.split(',').map((x) => x.trim())) {
+        if (matches[part] !== undefined) return matches[part];
+      }
+      return null;
+    },
   },
 });
 
@@ -1106,12 +1120,51 @@ test('editor: its buttons reach the handler through the grid delegation', async 
   // would have hidden the fact that app.js and panels.js disagreed about
   // what those handlers are called.
   const onClick = els.stations.handlers.click[0];
+  // The toolbar hangs in the card's HEAD, outside .editor — the one
+  // place the grid otherwise treats as inert chrome. So the close button
+  // reaches the handler through .editnav or it never reaches it at all.
   onClick(clickEvt({
     a: null,
-    '.editor': { tagName: 'DIV' },
+    '.editnav': { tagName: 'SPAN' },
     button: { classList: { contains: (c) => c === 'f-cancel' }, closest: () => null, dataset: {} },
   }));
-  assert.equal(t.inlineEditorId, null, 'Cancel closed the editor');
+  assert.equal(t.inlineEditorId, null, 'the × closed the editor');
+});
+
+// The toolbar is glyphs on a line it shares with the station's name, so
+// what each one DOES has to live in its accessible name.
+test('editor toolbar: every action is a named icon, and × sits last', async () => {
+  const { t } = ownerBoot({
+    '/stations/list': () => ({ status: 200, body: { stations: [srvNTS] } }),
+    '/vocab': () => ({ status: 200, body: V3_VOCAB }),
+  });
+  await settle();
+  t.adoptNow({ stations: [] });
+  await settle();
+  await t.openStationEditorById(srvNTS.id);
+  await settle();
+
+  const nav = t.editorNavHTML();
+  for (const [cls, icon] of [
+    ['f-delete', 'icon--trash'],
+    ['f-save', 'icon--check'],
+    ['f-cancel', 'icon--close'],
+  ]) {
+    assert.ok(nav.includes(cls), `${cls} present`);
+    assert.ok(nav.includes(icon), `${cls} is an icon`);
+  }
+  assert.ok(!nav.includes('>Cancel<') && !nav.includes('>Save<'), 'no word buttons left');
+  // Closing is the last thing on the row because that is where the cog
+  // it replaces was: the same spot opens and closes the settings.
+  assert.ok(nav.lastIndexOf('f-cancel') > nav.lastIndexOf('f-save'), '× is last');
+  assert.ok(/aria-label="Delete station"/.test(nav), 'destructive action says so');
+
+  // Create mode has nothing to delete and nothing to restart.
+  t.editor = t.newEditor('nts');
+  const fresh = t.editorNavHTML();
+  assert.ok(!fresh.includes('f-delete') && !fresh.includes('f-saverestart'),
+    'create mode offers neither');
+  assert.ok(/aria-label="Create station"/.test(fresh), 'and the check says Create');
 });
 
 test('stream: a dropped stream reconnects, an intentional pause does not', async () => {
@@ -1482,4 +1535,37 @@ test('on air with no track yet: the card says what it is doing', async () => {
   assert.ok(!html.includes('>Live<'), 'and not the bare "Live" that read as broken');
   // The blink is what says "in progress, not stuck".
   assert.ok(html.includes('status--waiting'), 'carries the pending class');
+});
+
+// The fade over a card body is a claim that there is more to read. It
+// has to come from a measurement: this page once faded every card
+// unconditionally, and on the cards that had nothing more to show it
+// read as a rendering fault rather than as an invitation to scroll.
+test('overflow hint: the fade is measured, never assumed', async () => {
+  const { t, els } = boot();
+  await settle();
+  // render() short-circuits to the empty state with no cards, and the
+  // empty state has no bodies to measure.
+  t.adoptNow(payload(trackA));
+  const mk = (scrollHeight, clientHeight) => {
+    const el = { scrollHeight, clientHeight, cls: new Set() };
+    el.classList = {
+      toggle: (c, on) => (on ? el.cls.add(c) : el.cls.delete(c)),
+    };
+    return el;
+  };
+  const overflowing = mk(400, 200);
+  const exact = mk(200, 200);
+  const subpixel = mk(200.4, 200);   // layout noise, not content
+  els.stations.querySelectorAll = () => [overflowing, exact, subpixel];
+
+  t.render();
+  assert.ok(overflowing.cls.has('more-below'), 'a body with more to show fades');
+  assert.ok(!exact.cls.has('more-below'), 'one that fits does not');
+  assert.ok(!subpixel.cls.has('more-below'), 'and neither does rounding');
+
+  // It also has to come OFF again when the next track is shorter.
+  overflowing.scrollHeight = 180;
+  t.render();
+  assert.ok(!overflowing.cls.has('more-below'), 'the fade clears when it stops being true');
 });

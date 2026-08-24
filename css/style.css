@@ -89,7 +89,7 @@ main {
      depending on how many others existed and how much any of them had
      to say; every card is now the same rectangle, and content fits it
      rather than the other way round. */
-  grid-auto-rows: clamp(16rem, 38dvh, 22rem);
+  grid-auto-rows: clamp(18rem, 44dvh, 26rem);
   gap: var(--gap);
   padding: var(--gap);
   padding-bottom: calc(var(--gap) + env(safe-area-inset-bottom));
@@ -160,12 +160,35 @@ main > .gnote { grid-column: 1 / -1; }
   outline: 2px solid var(--border-strong);
   outline-offset: -4px;
 }
-.station.active .now { justify-content: safe flex-end; }
+.station:not(.active) .now { margin-block: auto; }
 .station.active {
   /* Deeper in the station's OWN colour, never a neutral highlight: the
      card you are listening to must not stop looking like that station. */
   background: color-mix(in oklab, var(--accent) 18%, var(--bg));
   border-color: color-mix(in oklab, var(--accent) 75%, var(--border));
+}
+
+/* Head, body, foot — three children for three rows. The dossier and the
+   timeline used to be extra children of the card grid, which put them in
+   implicit rows past the fixed height, where `overflow: hidden` cut the
+   last one through the middle of its glyphs. They are inside the body
+   now, and the body is the only thing that scrolls. */
+.station .cardbody {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  /* No `overscroll-behavior: contain` — reaching the end of a card's
+     scroll must hand the wheel back to the page. */
+  scrollbar-width: none;
+}
+.station .cardbody::-webkit-scrollbar { display: none; }
+/* Set by render(), never by a media query: see renderOverflowHints(). */
+.station .cardbody.more-below {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.2rem), transparent);
 }
 
 .station .head {
@@ -207,24 +230,13 @@ main > .gnote { grid-column: 1 / -1; }
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  /* `safe` centers while the block fits and falls back to start-aligned
-     the moment it doesn't: plain centering would push the first line
-     out past the scroll origin, where it can never be read. */
-  /* Centred while the card is quiet — a tall column with its only line
-     shoved to the bottom reads as a mistake. The card being listened to
-     grows a dossier underneath, and there the marquee drops to the foot
-     of its row so the two sit together (see .station.active below). */
-  justify-content: safe center;
   text-align: left;
   gap: 0.3em;
   min-width: 0;
-  /* The safety valve, for the rare card whose dossier still outgrows a
-     fixed row: it scrolls rather than cutting a line in half. No
-     `overscroll-behavior: contain` — reaching the end of that scroll
-     must hand the wheel back to the page, or the pointer resting on a
-     card would trap it. */
+  /* The card body is the scroller; a second one nested here would fight
+     it for the same wheel. */
   min-height: 0;
-  overflow-y: auto;
+  flex: 0 0 auto;
   padding-block: 0.15em;
 }
 /* Only a block that really does continue below fades at its edge — the
@@ -276,8 +288,15 @@ main > .gnote { grid-column: 1 / -1; }
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
-.station .trackinfo .ticol { display: grid; gap: 0.3rem; align-content: start; }
-.station .trackinfo p { margin: 0; }
+.station .trackinfo .ticol { display: grid; gap: 0.3rem; align-content: start; min-width: 0; }
+.station .trackinfo p { margin: 0; min-width: 0; }
+/* Every line of the dossier except the biography is a list of names, and
+   a list of names is one line long. */
+.station .trackinfo p:not(.tibio) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* A comfortable measure for the bio, whatever the card's width. */
 /* A comfortable measure, and a hard stop: five lines is what a fixed
    card can give a biography without the rest of the dossier falling off
@@ -286,8 +305,8 @@ main > .gnote { grid-column: 1 / -1; }
   max-width: 52ch;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  line-clamp: 5;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
 }
 
@@ -907,14 +926,31 @@ main.editing .station .now { overflow: visible; }
 .station .btn:disabled { opacity: 0.4; cursor: default; }
 .station .btn--danger { border-color: var(--danger); color: var(--danger); }
 
-/* The way in. A cog, sized a step under the foot controls: it sits
-   beside the station's name, where a full-size glyph would compete with
-   it. Full opacity — the ✎ this replaces was invisible at 45%. */
-.station .act--edit { padding: 0.2rem; flex-shrink: 0; }
-.station .act--edit .icon {
+/* The way in, and the way back out. A cog, sized a step under the foot
+   controls: it sits beside the station's name, where a full-size glyph
+   would compete with it. Full opacity — the ✎ this replaces was
+   invisible at 45%. The editor's toolbar takes the same slot and the
+   same size, so × lands exactly where the cog was and the two read as
+   one control that toggles. */
+.station .act--edit,
+.station .editnav .act { padding: 0.2rem; flex-shrink: 0; }
+.station .act--edit .icon,
+.station .editnav .icon {
   width: clamp(1.15rem, 2.4vmin, 1.6rem);
   height: clamp(1.15rem, 2.4vmin, 1.6rem);
 }
+.station .editnav {
+  display: flex;
+  align-items: center;
+  /* Tighter than the head's own gap: these four are one group, sitting
+     apart from the name they share the line with. */
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+/* Delete keeps the danger colour it had as a worded button, and sits at
+   the far end of the group from ×, so the two irreversible-looking
+   glyphs are never neighbours. (It still asks for the typed name.) */
+.station .editnav .act--danger { color: var(--danger); }
 
 /* The summary that makes the settings visible without opening anything:
    kind, tags and era, in one muted row under the station name. */

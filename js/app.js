@@ -314,6 +314,14 @@ const ICON_MUTED =
   `<svg class="icon icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16.5 10l4 4M20.5 10l-4 4"/></svg>`;
 const ICON_COG =
   `<svg class="icon icon--cog" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6" ${ICON_STROKE}/><circle cx="12" cy="12" r="6" ${ICON_STROKE}/><path ${ICON_STROKE} d="M18 12h2M16.243 7.757l1.414-1.414M12 6V4M7.757 7.757 6.343 6.343M6 12H4M7.757 16.243l-1.414 1.414M12 18v2M16.243 16.243l1.414 1.414"/></svg>`;
+const ICON_CLOSE =
+  `<svg class="icon icon--close" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M6.75 6.75l10.5 10.5M17.25 6.75l-10.5 10.5"/></svg>`;
+const ICON_CHECK =
+  `<svg class="icon icon--check" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+const ICON_RESTART =
+  `<svg class="icon icon--restart" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M22.5 4.5v5.5H17M20.1 15a8.5 8.5 0 1 1-2-8.84l4.4 3.84"/></svg>`;
+const ICON_TRASH =
+  `<svg class="icon icon--trash" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4.5 7h15M9.75 7V4.5h4.5V7M6.75 7l1 12.5h8.5L17.25 7"/></svg>`;
 const ICON_SHARE =
   `<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>`;
 
@@ -606,6 +614,7 @@ function editorCardHTML(s) {
       <div class="head">
         <span class="dot${s.offAir ? ' off' : ''}" aria-hidden="true"></span>
         <span class="name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+        ${typeof editorNavHTML === 'function' ? editorNavHTML() : ''}
       </div>
       <div class="editor">${editorBodyHTML()}</div>
     </div>`;
@@ -812,10 +821,12 @@ function renderGrid() {
           <span class="name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
           ${editBtn}
         </div>
-        ${settingsSummaryHTML(s)}
-        <div class="now">${now}${nowLinks}</div>
-        ${info}
-        ${timeline}
+        <div class="cardbody">
+          ${settingsSummaryHTML(s)}
+          <div class="now">${now}${nowLinks}</div>
+          ${info}
+          ${timeline}
+        </div>
         <div class="foot">
           ${actions}
           <span class="transport" title="${isPlaying ? 'Pause' : 'Play'}"
@@ -827,7 +838,10 @@ function renderGrid() {
       // The ghost card holds its own create form: the station you are
       // about to make, in the place it will appear.
       ? `<div class="station station--new station--editing" data-new="1" data-editing="1">
-          <div class="head"><span class="name">New station</span></div>
+          <div class="head">
+            <span class="name" title="New station">New station</span>
+            ${typeof editorNavHTML === 'function' ? editorNavHTML() : ''}
+          </div>
           <div class="editor">${editorBodyHTML()}</div>
         </div>`
       : `<div role="button" tabindex="0" class="station station--new" data-new="1"
@@ -835,6 +849,22 @@ function renderGrid() {
           <div class="now"><span class="newplus" aria-hidden="true">＋</span><span class="newlabel">New station</span></div>
         </div>`)
     : '');
+
+  renderOverflowHints();
+}
+
+// A card is a fixed rectangle, and a rectangle can be too small for what
+// a particular track has to say. When that happens the body scrolls, and
+// the fade tells you so — but ONLY when it is true. An earlier version
+// of this page faded every card unconditionally and the result read as a
+// rendering fault on the cards that had nothing more to show, so the
+// class is set from a measurement and never from a guess.
+function renderOverflowHints() {
+  for (const body of $stations.querySelectorAll('.cardbody')) {
+    // +1 for sub-pixel layout: a body one third of a pixel taller than
+    // its box is not "more below".
+    body.classList.toggle('more-below', body.scrollHeight > body.clientHeight + 1);
+  }
 }
 
 // The inline editor lives inside #stations, so the grid's own listeners
@@ -845,8 +875,10 @@ function renderGrid() {
 $stations.addEventListener('click', (e) => {
   // Provenance links navigate; they must not toggle playback.
   if (e.target.closest('a')) return;
-  // An open editor is a form, not a play/pause surface.
-  if (e.target.closest('.editor')) {
+  // An open editor is a form, not a play/pause surface — and its toolbar
+  // lives up in the card's head, outside .editor, so it has to be named
+  // here too or the inert-chrome rule below would swallow every click.
+  if (e.target.closest('.editor, .editnav')) {
     if (typeof onControlClick === 'function') onControlClick(e);
     return;
   }
