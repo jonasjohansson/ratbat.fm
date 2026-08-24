@@ -492,6 +492,27 @@ const KIND_LABELS = {
 };
 const kindLabel = (k) => KIND_LABELS[k] || k || 'Station';
 
+// The name a station gets if nobody types one: what it is, then what it
+// is made of. "NTS Disco", "Bandcamp Techno, House". Stations are
+// defined by a source and a handful of tags, so a name that isn't those
+// two things is usually a name nobody chose — the field stayed blank or
+// got the same words typed a second time.
+//
+// Sentence case per tag rather than title case: "drum and bass" becomes
+// "Drum and bass", never "Drum And Bass". Capitalising only the first
+// letter cannot be wrong about a connector it doesn't recognise.
+function suggestedName(kind, tags) {
+  const clean = (tags || []).map((x) => String(x).trim()).filter(Boolean);
+  const label = kindLabel(kind);
+  if (!clean.length) return label;
+  // Three is a name; past that it is a description, and the summary line
+  // under the name is where the full list belongs.
+  const shown = clean.slice(0, 3)
+    .map((x) => x.charAt(0).toUpperCase() + x.slice(1))
+    .join(', ');
+  return `${label} ${shown}`;
+}
+
 // The owner surface exists only where BOTH are true: a key is stored and
 // the server advertises station CRUD. Everything per-station gates on
 // this one predicate — grid cards, the ✎, the ghost card.
@@ -579,9 +600,14 @@ function settingsSummaryHTML(s) {
   }
   if ((q.regions || []).length) bits.push((q.regions || []).map(regionName).join(', '));
   if (s.kind === 'playlist' && s.trackCount != null) bits.push(`${s.trackCount} tracks`);
-  return bits.length > 1
-    ? `<div class="setsum">${escapeHtml(bits.join(' · '))}</div>`
-    : '';
+  if (bits.length < 2) return '';
+  const summary = bits.join(' · ');
+  // An auto-named station says "NTS · disco" under a name that already
+  // reads "NTS Disco". Compare on words, not punctuation, and drop the
+  // line when it adds nothing.
+  const words = (x) => String(x).toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (words(summary).join(' ') === words(s.name).join(' ')) return '';
+  return `<div class="setsum">${escapeHtml(summary)}</div>`;
 }
 
 // The form's markup lives in panels.js, which owns the editor's state
@@ -641,6 +667,9 @@ function editorCardHTML(s) {
 }
 
 function render() {
+  // First, and outside every early return below: the strip belongs to
+  // the page, not to the grid.
+  renderTimeline();
   // Keep the lock in step with the stored passcode from one place: a 403
   // can drop the key mid-session, and the icon must not keep claiming
   // owner mode after the buttons have gone.
@@ -842,7 +871,6 @@ function renderGrid() {
     : '');
 
   renderOverflowHints();
-  renderTimeline();
 }
 
 // --- The master timeline ---------------------------------------------
@@ -857,20 +885,27 @@ function renderGrid() {
 // full. What is left is the clock, the links for the thing you are
 // hearing, and the one track that is certain to follow.
 //
-// It follows the station you are listening to, and stands down when you
-// are not listening to anything rather than inventing a "now" out of
-// whichever station happens to be first.
+// It follows the station you are listening to, and it is ALWAYS on the
+// page — the foot of the layout does not appear and disappear as you
+// press play, and the way to the log has to exist before you have
+// chosen anything to listen to.
+//
+// With no station of your own it says which of the two silences this is,
+// because they are different facts: the radio can be broadcasting to
+// other people while you are not tuned in to any of it.
 function renderTimeline() {
   if (!$tl) return;
+  $tl.hidden = false;
+  const historyLink = '<a class="tl-more" href="/history">History</a>';
   const s = stations.find((x) => x.id === activeId);
   const shown = s ? displayTrack(s) : null;
   const t = shown && shown.track;
   if (!s || !t) {
-    $tl.innerHTML = '';
-    $tl.hidden = true;
+    const onAir = stations.some((x) => !x.offAir && x.currentTrack);
+    $tl.innerHTML = `<ol class="tl-rail"><li class="tl-idle">${
+      onAir ? 'Not tuned in' : 'Nothing on air'}</li></ol>${historyLink}`;
     return;
   }
-  $tl.hidden = false;
 
   const sid = escapeHtml(s.id);
   const links = [
@@ -895,8 +930,7 @@ function renderTimeline() {
       </li>`
     : '';
 
-  $tl.innerHTML = `<ol class="tl-rail">${now}${next}</ol>
-    <a class="tl-more" href="/history">History</a>`;
+  $tl.innerHTML = `<ol class="tl-rail">${now}${next}</ol>${historyLink}`;
 }
 
 // A card is a fixed rectangle, and a rectangle can be too small for what
