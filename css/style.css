@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light dark;
   --bg: #fff;
   --fg: #111;
   --muted: var(--fg);   /* one ink: no greys, by request */
@@ -30,15 +31,74 @@
   --fs-name: clamp(1rem, 2.4vmin, 1.45rem);
   --fs-card: clamp(0.85rem, 1.7vmin, 1rem);
   --fs-meta: clamp(0.68rem, 1.25vmin, 0.78rem);
+
+  /* How a station's card is built from its accent hue. These live on
+     :root and NOT on `.station`, which is the whole point: the dark
+     scheme overrides `:root`, and a `.station` rule further down the
+     sheet would beat a `.station` rule inside a media query on source
+     order alone. That is exactly what happened — dark mode was painting
+     cards with the LIGHT ink, oklch lightness 0.40 on a near-black
+     card, measured at 1.01:1 against its background. Invisible.
+     Tokens here cannot lose that race. */
+  --card-ink-l: 0.40;      /* perceptual lightness of the card's text */
+  --card-ink-c: 0.12;      /* its chroma */
+  --card-ink-l-hsl: 26%;   /* the same, for the hsl() fallback */
+  --card-ink-s-hsl: 55%;
+  /* What the accent is mixed INTO. On white a 6% tint is already a
+     visible blush; on pure black it is nothing at all, so the dark
+     scheme lifts the card off the page first and tints that. */
+  --card-base: var(--bg);
+  --card-wash: 7%;         /* accent mixed into an idle card */
+  --card-wash-active: 26%; /* …and into the one you are listening to */
+  --card-hover: 16%;       /* …and under the pointer */
+  --card-line: 45%;        /* accent mixed into an idle card's border */
+  /* Hover and active pull the EDGE toward the card's ink rather than
+     further into its accent. Ink is the one colour on a card guaranteed
+     to sit at a readable distance from its background in either scheme,
+     because that is how it is defined — so an edge drawn in it is
+     legible at every hue without a number being tuned per scheme.
+     Measured against the accent it replaces: the active ring goes from
+     1.62:1 to 7.39:1 in light and 2.02:1 to 4.55:1 in dark. */
+  --card-line-hover: 45%;   /* …toward ink */
+  --card-line-active: 70%;
+  /* The ring inside the active card's border. A geometric signal, not a
+     luminance one: two tints of the same hue barely separate by
+     luminance however far the mix is pushed (measured: 70% accent still
+     only reached 1.97:1 in dark, while dragging the text down to
+     3.19:1), but a line either is there or it isn't, at any hue. */
+  --card-ring: 2px;
+  --card-icon-mix: 30%;     /* how far the hairline icons lean toward ink */
+  /* What a text field is filled with. Not `--bg`: in dark that is pure
+     black, darker than the card the field sits on, so every input read
+     as a hole punched through it. */
+  --field-bg: #fff;
+  --field-line: 55%;        /* how far a field's border leans toward ink */
 }
 
 @media (prefers-color-scheme: dark) {
-  .station {
-    --card-ink: hsl(var(--accent-h, 0) 45% 82%);
-    --card-ink: oklch(from var(--accent) 0.86 0.09 h);
-    --hover: color-mix(in oklab, var(--accent) 16%, var(--bg));
-  }
   :root {
+    /* Light ink on a dark card, and the washes have to work harder: a
+       6% tint of an accent over white is a visible blush, the same 6%
+       over black is almost nothing. */
+    /* 0.92, not 0.88: on the active card's heavier wash the lighter ink
+       measured 4.04:1, just under the 4.5 a body text needs. */
+    --card-ink-l: 0.92;
+    --card-ink-c: 0.10;
+    --card-ink-l-hsl: 84%;
+    --card-ink-s-hsl: 55%;
+    /* Cards are surfaces here, not tints of the page: against pure
+       black an 18% wash measured 1.02:1, which is to say invisible.
+       Tinting a lifted base instead takes that to 1.33:1 and lifts
+       hover and active with it. */
+    --card-base: #141414;
+    --card-wash: 18%;
+    --card-wash-active: 52%;
+    --card-hover: 32%;
+    --card-line: 60%;
+    /* The border alone is faint against a dark card, and these icons are
+       hairlines. Lean them toward the card's ink. */
+    --card-icon-mix: 45%;
+    --field-bg: #202020;
     --bg: #000;
     --fg: #f0f0f0;
     --muted: var(--fg);   /* one ink: no greys, by request */
@@ -82,7 +142,10 @@ body.page-history {
   overflow: visible;
 }
 
-main {
+/* The stations grid. Addressed by id, not by `main`: the history page
+   has a <main> of its own, and this rule was laying its list and its
+   "More" button out as a grid of station cards. */
+#stations {
   /* No min-height and no header arithmetic: main IS the 1fr row of the
      page grid, so it gets whatever the header and the strip leave,
      measured by the browser rather than guessed at in a calc(). The
@@ -118,7 +181,7 @@ main {
   font-size: 1rem;
 }
 
-main > .gnote { grid-column: 1 / -1; }
+#stations > .gnote { grid-column: 1 / -1; }
 
 .station {
   position: relative;
@@ -129,7 +192,7 @@ main > .gnote { grid-column: 1 / -1; }
      the accent stays a whisper — a tinted border and a faint wash — so
      the page reads calm but stations tell apart at a glance. */
   --accent: hsl(var(--accent-h, 0) 60% 58%);
-  --card-line: color-mix(in oklab, var(--accent) 45%, var(--border));
+  --card-edge: color-mix(in oklab, var(--accent) var(--card-line), var(--border));
   /* Ink in the card's own colour, and visibly so. Two declarations on
      purpose: the hsl() fallback works everywhere, and the relative
      oklch() takes the accent's exact hue while forcing a perceptual
@@ -139,17 +202,18 @@ main > .gnote { grid-column: 1 / -1; }
      so every station lands at the same readable depth.
      Redefining --fg and --muted here tints everything inside the card
      without touching a single rule that uses them. */
-  --card-ink: hsl(var(--accent-h, 0) 55% 26%);
-  --card-ink: oklch(from var(--accent) 0.40 0.12 h);
+  --card-ink: hsl(var(--accent-h, 0) var(--card-ink-s-hsl) var(--card-ink-l-hsl));
+  --card-ink: oklch(from var(--accent) var(--card-ink-l) var(--card-ink-c) h);
   --fg: var(--card-ink);
   --muted: var(--card-ink);
-  --hover: color-mix(in oklab, var(--accent) 13%, var(--bg));
+  --hover: color-mix(in oklab, var(--accent) var(--card-hover), var(--card-base));
+  --card-icon: color-mix(in oklab, var(--card-ink) var(--card-icon-mix), var(--card-edge));
   /* Even the on-air light belongs to the station: a red dot on a blue
      card reads as a fault. The pulse is what says "live", not the hue. */
   --dot: var(--accent);
   color: var(--card-ink);
-  border: 1px solid var(--card-line);
-  background: color-mix(in oklab, var(--accent) 6%, var(--bg));
+  border: 1px solid var(--card-edge);
+  background: color-mix(in oklab, var(--accent) var(--card-wash), var(--card-base));
   border-radius: clamp(18px, 2.5vmin, 26px);
   overflow: hidden;
   font: inherit;
@@ -167,7 +231,13 @@ main > .gnote { grid-column: 1 / -1; }
   overflow: hidden;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.station:hover { background: var(--hover); }
+/* Hover changes two things, because on a dark card the background alone
+   moves by 1.17:1 and that is not a signal. The border going to full
+   accent is. */
+.station:hover {
+  background: var(--hover);
+  border-color: color-mix(in oklab, var(--card-ink) var(--card-line-hover), var(--card-edge));
+}
 .station:focus-visible {
   outline: 2px solid var(--border-strong);
   outline-offset: -4px;
@@ -176,8 +246,16 @@ main > .gnote { grid-column: 1 / -1; }
 .station.active {
   /* Deeper in the station's OWN colour, never a neutral highlight: the
      card you are listening to must not stop looking like that station. */
-  background: color-mix(in oklab, var(--accent) 18%, var(--bg));
-  border-color: color-mix(in oklab, var(--accent) 75%, var(--border));
+  background: color-mix(in oklab, var(--accent) var(--card-wash-active), var(--card-base));
+  border-color: color-mix(in oklab, var(--card-ink) var(--card-line-active), var(--card-edge));
+  /* The ring: the one thing on this page that says "this is the station
+     you are hearing" without depending on the hue it hashed to. */
+  box-shadow: inset 0 0 0 var(--card-ring) var(--card-ink);
+}
+/* Hover still has to register on the card you are already listening to. */
+.station.active:hover {
+  background: color-mix(in oklab, var(--accent)
+    calc(var(--card-wash-active) + 8%), var(--card-base));
 }
 
 /* Head, body, foot — three children for three rows. The dossier and the
@@ -294,7 +372,7 @@ main > .gnote { grid-column: 1 / -1; }
      band is — below this line is about the music, not the music. */
   max-width: min(60rem, 100%);
   padding-top: 0.8rem;
-  border-top: 1px solid var(--card-line);
+  border-top: 1px solid var(--card-edge);
   color: var(--muted);
   font-size: var(--fs-meta);
   line-height: 1.55;
@@ -420,7 +498,7 @@ main > .gnote { grid-column: 1 / -1; }
      card edge where overflow: hidden clips them away. */
   min-width: 0;
 }
-.station .icon { color: var(--card-line); }
+.station .icon { color: var(--card-icon); }
 .station .act--like .icon--heart-filled { color: var(--dot); }
 .station .act {
   border: none;
@@ -445,14 +523,19 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--dot);
   opacity: 1;
 }
-.station .tlink,
-.station .nowlinks .tlink {
+/* Provenance links, wherever they appear — a card, the strip along the
+   foot, a history row. NOT scoped to `.station`, which is what left the
+   strip's and the log's links painted in the browser's default blue: on
+   a black page that is both illegible and the only thing on the site
+   that is not in the ink of what it belongs to. Inside a card `--muted`
+   is the card's own ink, so this keeps that behaviour for free. */
+.tlink {
   color: var(--muted);
   text-decoration: underline;
   text-underline-offset: 2px;
   flex-shrink: 0;
 }
-.station .tlink:hover { color: var(--fg); }
+.tlink:hover { color: var(--fg); }
 .station .nowlinks {
   display: flex;
   align-items: center;
@@ -584,6 +667,15 @@ main > .gnote { grid-column: 1 / -1; }
   text-overflow: ellipsis;
 }
 #history .hsaved { color: var(--dot); }
+/* One cell for the heart and the links, so a row with both never spills
+   onto a second line. */
+#history .hmeta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
 /* On a phone there is no room for four columns; the row stacks its
    header line above the track. */
 @media (max-width: 34rem) {
@@ -608,7 +700,7 @@ main > .gnote { grid-column: 1 / -1; }
 }
 #history .h-more:hover { color: var(--fg); border-color: var(--border-strong); }
 
-.station .icon { color: var(--card-line); }
+.station .icon { color: var(--card-icon); }
 .station .act--like .icon--heart-filled { color: var(--dot); }
 .station .act {
   border: none;
@@ -633,14 +725,7 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--dot);
   opacity: 1;
 }
-.station .tlink,
-.station .nowlinks .tlink {
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  flex-shrink: 0;
-}
-.station .tlink:hover { color: var(--fg); }
+
 .station .nowlinks {
   display: flex;
   align-items: center;
@@ -815,7 +900,7 @@ dialog::backdrop {
    now — so the grid takes it instead. The strip stays pinned at the foot
    while you scroll the form, which is the right relationship anyway: the
    radio does not stop being on air because you opened a settings pane. */
-main.editing {
+#stations.editing {
   height: auto;
   grid-template-rows: none;
   /* `min-content`, NOT `auto`. `auto` maxes out at max-content, and the
@@ -831,10 +916,10 @@ main.editing {
   overflow-y: auto;
   scrollbar-width: none;
 }
-main.editing::-webkit-scrollbar { display: none; }
-main.editing .station { min-height: 40vh; }
-main.editing .station--editing { min-height: 0; }
-main.editing .station .cardbody { overflow: visible; }
+#stations.editing::-webkit-scrollbar { display: none; }
+#stations.editing .station { min-height: 40vh; }
+#stations.editing .station--editing { min-height: 0; }
+#stations.editing .station .cardbody { overflow: visible; }
 
 /* --- The station editor, inside its card ----------------------------- *
  * The form replaces the card's now-playing body while it is open, so it
@@ -864,12 +949,18 @@ main.editing .station .cardbody { overflow: visible; }
 .station .editor select {
   width: 100%;
   padding: 0.4rem 0.55rem;
-  border: 1px solid var(--border);
+  /* Edged in the card's own ink rather than in the page's neutral
+     border, which against a tinted card was all but invisible. */
+  border: 1px solid color-mix(in oklab, var(--card-ink) var(--field-line), var(--card-edge));
   border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--field-bg);
+  color: var(--card-ink);
   font: inherit;
 }
+/* The one place a station's accent is allowed to drive a native widget:
+   checkboxes belong to the card they are on. */
+.station .editor input[type="checkbox"] { accent-color: var(--card-ink); }
+.station .editor ::placeholder { color: var(--card-ink); opacity: 0.55; }
 .station .editor .frow {
   display: flex;
   flex-wrap: wrap;
