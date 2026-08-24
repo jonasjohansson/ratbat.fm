@@ -27,8 +27,9 @@
        --fs-card  the marquee: what is on air right now
        --fs-meta  everything about it — the dossier, the chrome, the log
      Hierarchy comes from these three and from weight. Nothing else. */
-  --fs-card: clamp(0.95rem, 2.2vmin, 1.2rem);
-  --fs-meta: clamp(0.72rem, 1.5vmin, 0.86rem);
+  --fs-name: clamp(1rem, 2.4vmin, 1.45rem);
+  --fs-card: clamp(0.85rem, 1.7vmin, 1rem);
+  --fs-meta: clamp(0.68rem, 1.25vmin, 0.78rem);
   --topbar-h: 0px;
 }
 
@@ -83,7 +84,12 @@ main {
      tall columns on a desktop and stack into rows on a phone, with
      neither case written down anywhere. */
   grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
-  grid-auto-rows: minmax(0, 1fr);
+  /* A card is a fixed height, not a share of what is left over. Rows
+     sized by `1fr` meant the same station was a different shape
+     depending on how many others existed and how much any of them had
+     to say; every card is now the same rectangle, and content fits it
+     rather than the other way round. */
+  grid-auto-rows: clamp(16rem, 38dvh, 22rem);
   gap: var(--gap);
   padding: var(--gap);
   padding-bottom: calc(var(--gap) + env(safe-area-inset-bottom));
@@ -182,12 +188,15 @@ main > .gnote { grid-column: 1 / -1; }
 }
 .station .name {
   font-weight: 700;
-  font-size: clamp(1.1rem, 3.5vmin, 2.2rem);
+  font-size: var(--fs-name);
   letter-spacing: -0.01em;
   line-height: 1.2;
-  /* Names wrap rather than truncate: a station you cannot read the name
-     of is worse than one that takes two lines. */
-  overflow-wrap: anywhere;
+  /* One line, always. A name that wrapped changed the card's shape, and
+     the shape is now the one thing every card has in common. The full
+     name stays available in the title attribute. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
 }
@@ -209,12 +218,13 @@ main > .gnote { grid-column: 1 / -1; }
   text-align: left;
   gap: 0.3em;
   min-width: 0;
-  /* Never clip what's playing. The card is a fixed grid cell, so when
-     the track plus its info outgrow the row the block scrolls inside
-     the card — glyphs stay whole, nothing is cut mid-descender. */
+  /* The safety valve, for the rare card whose dossier still outgrows a
+     fixed row: it scrolls rather than cutting a line in half. No
+     `overscroll-behavior: contain` — reaching the end of that scroll
+     must hand the wheel back to the page, or the pointer resting on a
+     card would trap it. */
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
   padding-block: 0.15em;
 }
 /* Only a block that really does continue below fades at its edge — the
@@ -225,19 +235,20 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--fg);
   font-weight: 600;
   line-height: 1.3;
-  /* No line clamp: Bandcamp titles run long and a half-shown title is
-     just noise. `anywhere` also saves the pathological ones with no
-     spaces at all from pushing the card sideways. */
-  overflow-wrap: anywhere;
-  max-width: 100%;
 }
-.station .now .artist {
-  overflow-wrap: anywhere;
-  max-width: 100%;
-}
+/* Title, artist and album are each one fact and each get one line. The
+   long Bandcamp titles that argued for wrapping are exactly the ones
+   that used to set a card's height on their own; the whole string is on
+   the element's title attribute and, for the card you are listening to,
+   on the source link beneath it. */
+.station .now .title,
+.station .now .artist,
 .station .now .album {
-  overflow-wrap: anywhere;
-  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The "from" prefix recedes further than the album name it introduces. */
 
@@ -268,7 +279,17 @@ main > .gnote { grid-column: 1 / -1; }
 .station .trackinfo .ticol { display: grid; gap: 0.3rem; align-content: start; }
 .station .trackinfo p { margin: 0; }
 /* A comfortable measure for the bio, whatever the card's width. */
-.station .trackinfo .tibio { max-width: 52ch; }
+/* A comfortable measure, and a hard stop: five lines is what a fixed
+   card can give a biography without the rest of the dossier falling off
+   the bottom. */
+.station .trackinfo .tibio {
+  max-width: 52ch;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
+}
 
 /* The card, not the window, decides whether two columns fit — it is a
    grid cell, and the viewport tells you nothing about how wide it is. */
@@ -287,10 +308,27 @@ main > .gnote { grid-column: 1 / -1; }
   border-color: var(--border);
   background: transparent;
   color: var(--muted);
+  grid-template-rows: 1fr;
   align-content: center;
   justify-items: center;
 }
-.station--new .now { display: grid; gap: 0.4rem; justify-items: center; }
+/* …except while it holds the create form, which wants its heading at the
+   top and the form filling the rest, exactly like a real card. */
+.station--new.station--editing {
+  grid-template-rows: auto 1fr;
+  align-content: stretch;
+  justify-items: stretch;
+}
+/* `align-content: center` matters as much as the centring on the card
+   itself: this switches .now from a column flex to a grid, and a grid
+   stretches its rows apart by default — which is what held the ＋ and
+   its label at opposite ends of the card. */
+.station--new .now {
+  display: grid;
+  gap: 0.4rem;
+  align-content: center;
+  justify-items: center;
+}
 .station--new .newplus { font-size: clamp(1.6rem, 4vmin, 2.4rem); line-height: 1; }
 .station--new .newlabel { font-size: clamp(0.8rem, 1.8vmin, 1rem); }
 .station--new:hover, .station--new:focus-visible {
@@ -305,7 +343,8 @@ main > .gnote { grid-column: 1 / -1; }
   color: var(--muted);
   font-style: italic;
 }
-.station.loading .now .status {
+.station.loading .now .status,
+.station .now .status--waiting {
   animation: blink 1.4s ease-in-out infinite;
 }
 @keyframes blink {
@@ -744,13 +783,6 @@ dialog::backdrop {
   background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
-/* Grid chrome: the quiet per-card ✎ (owner + capability gated). */
-.station .act--edit {
-  font-size: clamp(0.9rem, 2.2vmin, 1.3rem);
-  line-height: 1;
-  flex-shrink: 0;
-}
-
 /* keep the grid clear of the collapsed panel bar */
 
 
@@ -758,10 +790,6 @@ dialog::backdrop {
    single column the moment two cards stop fitting, at whatever width
    that turns out to be. A card does need room to breathe when it is the
    only one on screen, though. */
-@media (max-width: 560px) {
-  .station { min-height: 60dvh; }
-}
-
 /* owner login — deliberately quiet. Guests should read it as furniture,
    not as a door they're being turned away from. */
 #lock {
@@ -788,6 +816,7 @@ dialog::backdrop {
 @media (prefers-reduced-motion: reduce) {
   .station.playing .dot,
   .station.loading .now .status,
+  .station .now .status--waiting,
   .station.loading .icon--loading { animation: none; }
 }
 
@@ -797,6 +826,7 @@ dialog::backdrop {
 main.editing {
   height: auto;
   grid-template-rows: none;
+  grid-auto-rows: auto;
 }
 main.editing .station { min-height: 40vh; }
 main.editing .station--editing { min-height: 0; }
@@ -877,17 +907,14 @@ main.editing .station .now { overflow: visible; }
 .station .btn:disabled { opacity: 0.4; cursor: default; }
 .station .btn--danger { border-color: var(--danger); color: var(--danger); }
 
-/* The way in. A bare ✎ at 45% opacity was invisible — the settings a
-   station has are worth a word. */
-.station .act--edit {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.1rem 0.6rem;
-  font-size: var(--fs-meta);
-  line-height: 1.6;
-  flex-shrink: 0;
+/* The way in. A cog, sized a step under the foot controls: it sits
+   beside the station's name, where a full-size glyph would compete with
+   it. Full opacity — the ✎ this replaces was invisible at 45%. */
+.station .act--edit { padding: 0.2rem; flex-shrink: 0; }
+.station .act--edit .icon {
+  width: clamp(1.15rem, 2.4vmin, 1.6rem);
+  height: clamp(1.15rem, 2.4vmin, 1.6rem);
 }
-.station .act--edit:hover { border-color: var(--border-strong); }
 
 /* The summary that makes the settings visible without opening anything:
    kind, tags and era, in one muted row under the station name. */

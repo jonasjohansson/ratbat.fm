@@ -1307,8 +1307,12 @@ test('now block: album line reads "from <album>" with a muted prefix', async () 
   t.activeId = 'S1';
   t.adoptNow(payload(trackA));
   assert.ok(els.stations.innerHTML.includes(
-    '<span class="album"><span class="from">from</span> LP One</span>'),
+    '<span class="from">from</span> LP One</span>'),
     'album line carries the from prefix');
+  // The line truncates to one row, so the whole album name has to stay
+  // reachable somewhere.
+  assert.ok(els.stations.innerHTML.includes('class="album" title="LP One"'),
+    'and the full name on the tooltip');
 });
 
 test('now block: album line suppressed when it repeats the title (trim + case-insensitive)', async () => {
@@ -1363,8 +1367,11 @@ test('settings affordance: guest never gets it even when the server advertises s
   owner.t.adoptNow(payload(trackA));
   const html = owner.els.stations.innerHTML;
   assert.ok(html.includes('act--edit'), 'owner gets the settings button');
-  assert.ok(html.includes('>Settings</button>'), 'named, not a bare glyph');
+  assert.ok(html.includes('icon--cog'), 'a cog, in the hairline icon set');
   assert.ok(html.includes('title="Station settings"'), 'and titled');
+  // The icon is decorative; the button carries the name, so the control
+  // stays findable by anyone not looking at it.
+  assert.ok(/aria-label="Settings for [^"]+"/.test(html), 'named for assistive tech');
 });
 
 // The strip is a dot now; what it SAYS lives in its tooltip, so these
@@ -1460,3 +1467,19 @@ test('a11y: share carries title+aria, transport glyph is Play/Pause per state', 
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 })();
+
+// A generative station is on air the instant it is started, but its
+// first track is minutes of network away — NTS alone pages the show
+// directory for ~11s before it has a single show to read a tracklist
+// from. The card used to say "Live" over an empty body for that whole
+// window, which reads as a station that does not work.
+test('on air with no track yet: the card says what it is doing', async () => {
+  const { t, els } = boot();
+  await settle();
+  t.adoptNow({ stations: [{ ...payload(null).stations[0], currentTrack: null }] });
+  const html = els.stations.innerHTML;
+  assert.ok(html.includes('Finding a track'), 'names the wait');
+  assert.ok(!html.includes('>Live<'), 'and not the bare "Live" that read as broken');
+  // The blink is what says "in progress, not stuck".
+  assert.ok(html.includes('status--waiting'), 'carries the pending class');
+});

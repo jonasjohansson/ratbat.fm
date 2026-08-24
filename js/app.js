@@ -312,6 +312,8 @@ const ICON_VOLUME =
   `<svg class="icon icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10"/></svg>`;
 const ICON_MUTED =
   `<svg class="icon icon--vol" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16.5 10l4 4M20.5 10l-4 4"/></svg>`;
+const ICON_COG =
+  `<svg class="icon icon--cog" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6" ${ICON_STROKE}/><circle cx="12" cy="12" r="6" ${ICON_STROKE}/><path ${ICON_STROKE} d="M18 12h2M16.243 7.757l1.414-1.414M12 6V4M7.757 7.757 6.343 6.343M6 12H4M7.757 16.243l-1.414 1.414M12 18v2M16.243 16.243l1.414 1.414"/></svg>`;
 const ICON_SHARE =
   `<svg class="icon icon--share" viewBox="0 0 24 24" aria-hidden="true"><path ${ICON_STROKE} d="M12 15V4m0 0L8 8m4-4 4 4M5 13v6h14v-6"/></svg>`;
 
@@ -528,10 +530,11 @@ function gridStations() {
 // edit.
 function editButtonHTML(s) {
   if (!canManageStations() || s.kind === 'playlist') return '';
-  // A word, not a glyph. The bare ✎ was there all along and nobody could
-  // find it — "what a station is" is worth naming out loud.
+  // A cog, in the same hairline stroke as every other control on the
+  // card. The glyph it replaces was a bare ✎ that nobody read as
+  // "settings"; a cog is the one icon that needs no caption.
   return `<button type="button" class="act act--edit"
-    title="Station settings" aria-label="Settings for ${escapeHtml(s.name)}">Settings</button>`;
+    title="Station settings" aria-label="Settings for ${escapeHtml(s.name)}">${ICON_COG}</button>`;
 }
 
 // The settings a station HAS, in one muted row under its name: what it
@@ -577,7 +580,7 @@ function offAirCardHTML(s) {
       data-offair="1">
       <div class="head">
         <span class="dot off" aria-hidden="true"></span>
-        <span class="name">${escapeHtml(s.name)}</span>
+        <span class="name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
         ${editButtonHTML(s)}
       </div>
       <div class="now">
@@ -602,7 +605,7 @@ function editorCardHTML(s) {
       data-editing="1">
       <div class="head">
         <span class="dot${s.offAir ? ' off' : ''}" aria-hidden="true"></span>
-        <span class="name">${escapeHtml(s.name)}</span>
+        <span class="name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
       </div>
       <div class="editor">${editorBodyHTML()}</div>
     </div>`;
@@ -680,10 +683,16 @@ function renderGrid() {
     const now = isLoading
       ? `<span class="status">Connecting…</span>`
       : t
-        ? `<b class="title">${escapeHtml(t.title)}</b><span class="artist">${escapeHtml(t.artist)}</span>`
-          + (albumShown ? `<span class="album"><span class="from">from</span> ${escapeHtml(t.album)}</span>` : '')
+        ? `<b class="title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</b><span class="artist" title="${escapeHtml(t.artist)}">${escapeHtml(t.artist)}</span>`
+          + (albumShown ? `<span class="album" title="${escapeHtml(t.album)}"><span class="from">from</span> ${escapeHtml(t.album)}</span>` : '')
           + (progress ? `<span class="progress" data-station="${escapeHtml(s.id)}">${progress}</span>` : '')
-        : `<span class="status">Live</span>`;
+        // On air with nothing selected. Almost always a station still
+        // filling its queue: a cold NTS station pages the show directory
+        // (~11s), then a tracklist, then resolves each track to
+        // something playable, and until that lands there is genuinely
+        // nothing to name. "Live" over an empty card read as broken —
+        // say what is happening instead.
+        : `<span class="status status--waiting">Finding a track…</span>`;
     const classes = [
       'station',
       active ? 'active' : '',
@@ -800,7 +809,7 @@ function renderGrid() {
         aria-busy="${isLoading}">
         <div class="head">
           <span class="dot" aria-hidden="true"></span>
-          <span class="name">${escapeHtml(s.name)}</span>
+          <span class="name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
           ${editBtn}
         </div>
         ${settingsSummaryHTML(s)}
