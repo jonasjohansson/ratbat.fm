@@ -67,19 +67,46 @@ const storeOwnerKey = (key) => {
 };
 
 // The now-playing DISPLAY lags the server on purpose: the server flips
-// the moment the encoder starts the next track, but listeners are ~ring
-// buffer + browser buffer behind (10s+). Hold the old title until the
-// audio has plausibly caught up. While display and server disagree, the
-// action buttons pause — a ♥ would target the server's track, not the
-// one being heard.
-// 10s is the buffer-lag ceiling, but a track shorter than ~30s must not
-// be held longer than a third of its runtime or the display never
-// catches up (station IDs, interstitials).
-const DISPLAY_DELAY_MS = 10_000;
-const displayDelayFor = (t) =>
-  t && t.durationSeconds
-    ? Math.max(2_000, Math.min(DISPLAY_DELAY_MS, t.durationSeconds * 1000 / 3))
-    : DISPLAY_DELAY_MS;
+// the moment the encoder starts the next track, but the listener is a
+// buffer behind that. Hold the old title until the audio has caught up.
+// While display and server disagree, the action buttons pause — a ♥
+// would target the server's track, not the one being heard.
+//
+// That lag used to be a flat 10s guess. It is two measurable terms
+// instead: the lead the broadcaster deliberately keeps (it says so on
+// the wire) plus whatever this browser has downloaded and not yet
+// played. The second term is the one a constant can never stand in for
+// — it differs per device, per network, per session — and guessing it
+// is exactly how the title came to flip at a different moment than the
+// sound.
+const FALLBACK_LEAD_S = 5;   // pre-leadSeconds broadcaster
+let serverLeadSeconds = FALLBACK_LEAD_S;
+
+// Audio downloaded but not yet played: how far this listener's ears are
+// behind the bytes the Mac has already sent. Zero when nothing is
+// playing — no ears to be behind. Capped so one bogus `buffered` range
+// can't freeze the display for a minute.
+function bufferedAheadSeconds() {
+  if (!$audio || $audio.paused) return 0;
+  const b = $audio.buffered;
+  if (!b || !b.length) return 0;
+  const ahead = b.end(b.length - 1) - $audio.currentTime;
+  return isFinite(ahead) && ahead > 0 ? Math.min(ahead, 60) : 0;
+}
+
+// Total desync between what /now.json says and what is in the room.
+function listenerLagSeconds() {
+  return serverLeadSeconds + bufferedAheadSeconds();
+}
+
+// A track shorter than ~3x the lag must not be held for the full lag or
+// the display never catches up at all (station IDs, interstitials).
+const displayDelayFor = (t) => {
+  const lag = listenerLagSeconds() * 1000;
+  return t && t.durationSeconds
+    ? Math.max(2_000, Math.min(lag, t.durationSeconds * 1000 / 3))
+    : lag;
+};
 const displayState = new Map(); // id -> {shownKey, shownTrack, shownAt, pendingKey, pendingTrack, pendingAt}
 
 function displayTrack(s) {
@@ -140,7 +167,13 @@ function displayTrack(s) {
 function elapsedOffsetMs(track) {
   const e = track && track.elapsedSeconds;
   if (typeof e !== 'number' || !isFinite(e) || e <= 0) return 0;
-  return e * 1000;
+  // The broadcaster counts elapsed from the moment IT opened the track.
+  // The listener is a known amount behind that, so the clock has to be
+  // too — otherwise reloading mid-track shows a position that is right
+  // for the Mac and wrong for the room. Floored at zero: a reload landing
+  // inside the lag window has not reached this track yet, and 0:00 is the
+  // honest answer.
+  return Math.max(0, e - listenerLagSeconds()) * 1000;
 }
 
 // mm:ss for elapsed/duration — progress is textual on purpose, no bars.
@@ -478,6 +511,12 @@ function volumeControlHTML() {
 // One ingestion path: SSE frames and poll responses both land here, so
 // rendering can't diverge between transports.
 function adoptNow(data) {
+  // How far ahead of the listener the broadcaster runs. Believed within
+  // reason only: this rides a public endpoint, and a nonsense value here
+  // would stall every title on the page.
+  if (typeof data.leadSeconds === 'number' && isFinite(data.leadSeconds)) {
+    serverLeadSeconds = Math.max(0, Math.min(30, data.leadSeconds));
+  }
   stations = (data.stations || []).map((s) => {
     if (s.streamURL && s.streamURL.startsWith('/')) s.streamURL = API_BASE + s.streamURL;
     return s;
