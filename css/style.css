@@ -131,7 +131,11 @@ html, body {
 body {
   height: 100dvh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* Settings, then what is playing, then the stations. Both bars are at
+     the top: the strip describes the card you are listening to, and the
+     two of them read as one block of chrome above the grid rather than
+     as two separate edges of the screen. */
+  grid-template-rows: auto auto 1fr;
   overflow: hidden;
 }
 /* Except the history page, which is a document and scrolls like one. */
@@ -581,7 +585,6 @@ body.page-history {
   flex-wrap: wrap;
   gap: 0.4rem 0.9rem;
   padding: 0.45rem calc(var(--gap) + 0.4rem);
-  border-bottom: 1px solid var(--border);
   font-size: var(--fs-meta);
   color: var(--muted);
 }
@@ -1130,12 +1133,16 @@ input[type="checkbox"] { accent-color: var(--fg); }
   align-items: center;
   gap: 1rem;
   min-width: 0;
-  border-top: 1px solid var(--border);
-  padding: 0.5rem calc(var(--gap) + 0.4rem)
-           calc(0.5rem + env(safe-area-inset-bottom));
+  /* The rule belongs under the PAIR of bars — #topbar gave up its own
+     border so the two do not stack into a double line. */
+  border-bottom: 1px solid var(--border);
+  padding: 0.15rem calc(var(--gap) + 0.4rem) 0.5rem;
   font-size: var(--fs-meta);
   color: var(--muted);
 }
+/* With the strip hidden, the settings row still needs the rule that
+   closes the block off from the grid. */
+#tl[hidden] + #stations { border-top: 1px solid var(--border); }
 #tl[hidden] { display: none; }
 
 .tl-rail {
