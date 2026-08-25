@@ -52,6 +52,11 @@ function makeEl() {
     paused: true,
     readyState: 0,
     src: '',
+    // Playback position and downloaded range: the two numbers the
+    // listener-lag maths reads. Empty by default (nothing playing);
+    // tests that care set `buffered` to a range of their own.
+    currentTime: 0,
+    buffered: { length: 0, end() { return 0; } },
     // Stateful, so the stream watchdog's "is it actually playing?" logic
     // is exercised rather than stubbed away.
     play() { this.paused = false; return Promise.resolve(); },
@@ -156,6 +161,9 @@ function boot(opts = {}) {
   fmtCount, regionName, shortBio, trackInfoHTML, ensureTrackInfo,
   get trackinfoCache() { return trackinfoCache; },
   displayDelayFor: displayDelayFor,
+  listenerLagSeconds, bufferedAheadSeconds,
+  get serverLeadSeconds() { return serverLeadSeconds; },
+  set serverLeadSeconds(v) { serverLeadSeconds = v; },
   get stations() { return stations; },
   get sseAlive() { return sseAlive; },
   set sseAlive(v) { sseAlive = v; },
@@ -206,12 +214,51 @@ test('fmtClock renders m:ss', ({ t }) => {
   assert.strictEqual(t.fmtClock(-3), '0:00');
 });
 
-test('displayDelayFor: 10s ceiling, third-of-runtime for short tracks, 2s floor', ({ t }) => {
-  assert.strictEqual(t.displayDelayFor(null), 10000);
-  assert.strictEqual(t.displayDelayFor({ durationSeconds: null }), 10000);
-  assert.strictEqual(t.displayDelayFor({ durationSeconds: 600 }), 10000);
-  assert.strictEqual(t.displayDelayFor({ durationSeconds: 15 }), 5000);
+test('displayDelayFor: the measured lag, third-of-runtime for short tracks, 2s floor', ({ t }) => {
+  // Nothing playing, so the lag is the broadcaster's declared lead alone.
+  assert.strictEqual(t.listenerLagSeconds(), 5);
+  assert.strictEqual(t.displayDelayFor(null), 5000);
+  assert.strictEqual(t.displayDelayFor({ durationSeconds: null }), 5000);
+  assert.strictEqual(t.displayDelayFor({ durationSeconds: 600 }), 5000);
+  assert.strictEqual(t.displayDelayFor({ durationSeconds: 9 }), 3000);
   assert.strictEqual(t.displayDelayFor({ durationSeconds: 3 }), 2000);
+});
+
+test('listener lag: the declared lead plus what the browser has not played', ({ t, els }) => {
+  assert.strictEqual(t.bufferedAheadSeconds(), 0, 'paused: no ears to be behind');
+
+  els.audio.paused = false;
+  els.audio.currentTime = 100;
+  els.audio.buffered = { length: 1, end: () => 112 };
+  assert.strictEqual(t.bufferedAheadSeconds(), 12);
+  assert.strictEqual(t.listenerLagSeconds(), 17, 'lead + buffer');
+  assert.strictEqual(t.displayDelayFor({ durationSeconds: 600 }), 17000);
+
+  // A buffer that reads backwards (a seek, a reset stream) is not a
+  // negative lag — it is no information.
+  els.audio.buffered = { length: 1, end: () => 90 };
+  assert.strictEqual(t.bufferedAheadSeconds(), 0);
+
+  // One absurd range must not freeze every title on the page.
+  els.audio.buffered = { length: 1, end: () => 1e6 };
+  assert.strictEqual(t.bufferedAheadSeconds(), 60);
+});
+
+test('the broadcaster declares its lead, within reason', async () => {
+  const { t } = boot();
+  await settle();
+  assert.strictEqual(t.serverLeadSeconds, 5, 'a server that says nothing keeps the default');
+
+  t.adoptNow({ leadSeconds: 12, stations: [] });
+  assert.strictEqual(t.serverLeadSeconds, 12);
+
+  // /now.json is public. Nonsense on it must not stall the display.
+  t.adoptNow({ leadSeconds: 900, stations: [] });
+  assert.strictEqual(t.serverLeadSeconds, 30, 'clamped');
+  t.adoptNow({ leadSeconds: -4, stations: [] });
+  assert.strictEqual(t.serverLeadSeconds, 0);
+  t.adoptNow({ leadSeconds: 'soon', stations: [] });
+  assert.strictEqual(t.serverLeadSeconds, 0, 'a non-number leaves the last good value');
 });
 
 test('friendlyError maps statuses, prefers short server messages otherwise', ({ t }) => {
@@ -1727,13 +1774,15 @@ test('reload: the clock starts where the broadcast actually is', async () => {
   t.activeId = 'S1';
   t.adoptNow(payload({ ...trackA, durationSeconds: 390, elapsedSeconds: 180 }));
   const html = els.tl.innerHTML;
-  assert.ok(html.includes('3:00 / 6:30'), `three minutes in (${html})`);
-  assert.ok(html.includes('−3:30'), 'and the countdown agrees');
+  // Three minutes in on the Mac, and this listener is the 5s lead behind
+  // that — the clock is for the room, not for the broadcaster.
+  assert.ok(html.includes('2:55 / 6:30'), `three minutes in, less the lag (${html})`);
+  assert.ok(html.includes('−3:35'), 'and the countdown agrees');
 
   // And it keeps counting from there rather than snapping back.
   state.nowMs += 5000;
   t.render();
-  assert.ok(els.tl.innerHTML.includes('3:05 / 6:30'), 'it carries on from there');
+  assert.ok(els.tl.innerHTML.includes('3:00 / 6:30'), 'it carries on from there');
 });
 
 test('reload: an old broadcaster that says nothing counts from now', async () => {
@@ -1749,7 +1798,11 @@ test('reload: an old broadcaster that says nothing counts from now', async () =>
 test('elapsedOffsetMs: only a real, forward position counts', async () => {
   const { t } = boot();
   await settle();
-  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: 42 }), 42000);
+  // 42s in on the Mac, and this listener is a 5s lead behind it.
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: 42 }), 37000);
+  // A reload landing inside the lag window has not reached the track at
+  // all yet — 0:00 is the honest reading, not a negative clock.
+  assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: 3 }), 0);
   // null is "not the current track" — the key is always present on the
   // wire, so its absence and its nullity mean the same thing here.
   assert.strictEqual(t.elapsedOffsetMs({ elapsedSeconds: null }), 0);
